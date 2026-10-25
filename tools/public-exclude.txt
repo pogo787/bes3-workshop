@@ -1,0 +1,6 @@
+# Paths excluded when building the public release tree (tools/public-tree.mjs).
+# Directory prefixes end with '/'; file entries match exact repo-relative paths.
+docs/internal/
+web/parts/
+web/workshop/part-images-pdf.js
+web/data/part-images.json

@@ -1,0 +1,32 @@
+MIT License
+
+Copyright (c) 2026 Remko Weijnen (https://github.com/rweijnen/bosch-bes3-reader)
+Copyright (c) 2026 Contributors (BES3 Workshop)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+Attribution & Upstream Research Credits:
+- Remko Weijnen — bosch-bes3-reader (https://github.com/rweijnen/bosch-bes3-reader)
+  Protocol core, WebUSB/WebBLE transports, address registry (src/address-registry.json),
+  fault memory RPCs, component part images, and classic reader.
+- radiohound — bosch-smart-system-ble (https://github.com/radiohound/bosch-smart-system-ble)
+  Smart System BLE/MCSP accessibility research and write response behavior.
+- revlat — bes3-analyzer (https://github.com/revlat/bes3-analyzer/tree/main)
+  CAN bus datapoint analysis and cross-verification of light and service addresses.

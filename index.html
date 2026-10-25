@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BES3 Workshop – Read &amp; Configure Bosch Smart System</title>
+<meta name="description" content="Read Bosch Smart System (BES3) eBike diagnostics via USB, unlock the bike light output, configure light wattage and service intervals, check System IDs, and generate a PDF diagnostic report in your browser.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="web/workshop/workshop.css">
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('bes3-workshop-theme');
+      if (!t) t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* ignore */ }
+  })();
+</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="topbar__inner">
+    <a class="wordmark" href="#" data-nav="start" aria-label="BES3 Workshop – Home">
+      <span class="wordmark__name">BES3</span><span class="wordmark__sub">Workshop</span>
+    </a>
+
+    <nav class="tabs" id="tabs" aria-label="Sections" hidden>
+      <button class="tab" data-tab="read" aria-current="page">Overview</button>
+      <button class="tab" data-tab="write">Configure</button>
+      <button class="tab" data-tab="report">Diagnostic Report</button>
+      <button class="tab" data-tab="registry">Registry</button>
+      <button class="tab" data-tab="log">Session Log</button>
+    </nav>
+
+    <div class="topbar__actions">
+      <span class="conn" id="connPill" data-state="idle"><span class="conn__dot" aria-hidden="true"></span><span id="connText">Not connected</span></span>
+      <button class="btn btn--primary btn--sm" id="btnTopReconnect" hidden>Reconnect</button>
+      <button class="btn btn--ghost btn--sm" id="btnReread" hidden>Re-read</button>
+      <button class="btn btn--ghost btn--sm" id="btnDisconnect" hidden>Disconnect</button>
+      <button class="icon-btn" id="btnTheme" aria-label="Toggle light/dark theme" title="Toggle light/dark theme">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="progress" id="progress" role="progressbar" aria-label="Read progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><div class="progress__bar" id="progressBar"></div></div>
+</header>
+
+<main id="main">
+  <!-- START -->
+  <section class="view view--start" id="view-start">
+    <div class="start">
+      <div class="start__copy">
+        <p class="eyebrow">Bosch Smart System · WebUSB · 100% In-Browser</p>
+        <h1 class="start__title">Read. Configure.<br>Document.</h1>
+        <p class="start__lead">Connect your eBike via a USB data cable. BES3 Workshop reads all key component and diagnostic data, unlocks the bike light output, configures light wattage and service intervals, checks System IDs, and exports a multi-page PDF diagnostic report. Every write is automatically re-read from the bike and verified.</p>
+        <div class="start__cta">
+          <button class="btn btn--primary btn--lg" id="btnConnect">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v13"/><path d="m8 6 4-4 4 4"/><path d="M7 11v2a5 5 0 0 0 10 0v-2"/><path d="M12 18v4"/></svg>
+            Connect eBike via USB
+          </button>
+          <button class="btn btn--ghost btn--lg" id="btnDemo">Try the simulated demo</button>
+        </div>
+        <p class="start__file">or <button class="link" id="btnOpenFile">open a saved readout (.json)</button> – offline, no bike required
+          <input type="file" id="fileInput" accept="application/json,.json" hidden></p>
+        <input type="file" id="catalogInput" accept="application/json,.json" hidden>
+        <p class="start__warn" id="usbWarn" hidden>This browser does not support WebUSB. Please use Chrome or Edge on Windows, macOS, or Linux. Demo mode and opening saved readouts still work.</p>
+      </div>
+
+      <ol class="steps">
+        <li class="step">
+          <span class="step__n">1</span>
+          <div><h3>Power on the eBike</h3><p>The system must be switched on. Close any other diagnostic tabs or software first.</p></div>
+        </li>
+        <li class="step">
+          <span class="step__n">2</span>
+          <div><h3>Plug in a USB data cable</h3><p>Connect to the USB-C port on the control unit. A charge-only cable will not work.</p></div>
+        </li>
+        <li class="step">
+          <span class="step__n">3</span>
+          <div><h3>Pair in the browser</h3><p>Click “Connect eBike via USB” and select the controller in the browser prompt.</p></div>
+        </li>
+        <li class="step step--note">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+          <p>Unofficial open-source tool, not affiliated with Bosch. Reading is strictly passive. Writes only occur after your explicit confirmation.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- READ -->
+  <section class="view" id="view-read" hidden></section>
+  <!-- WRITE -->
+  <section class="view" id="view-write" hidden></section>
+  <!-- REPORT -->
+  <section class="view" id="view-report" hidden></section>
+  <!-- REGISTRY -->
+  <section class="view" id="view-registry" hidden></section>
+  <!-- LOG -->
+  <section class="view" id="view-log" hidden></section>
+</main>
+
+<footer class="foot">
+  <div class="foot__inner">
+    <div>
+      <p class="foot__title">Foundations &amp; Acknowledgments</p>
+      <p>BES3 Workshop builds on the protocol research and code of these open-source projects.</p>
+    </div>
+    <ul class="credits">
+      <li><a href="https://github.com/rweijnen/bosch-bes3-reader" target="_blank" rel="noopener">rweijnen/bosch-bes3-reader</a><span>Protocol core, WebUSB transport, address registry, fault memory RPCs, and part images</span></li>
+      <li><a href="https://github.com/radiohound/bosch-smart-system-ble" target="_blank" rel="noopener">radiohound/bosch-smart-system-ble</a><span>Smart System BLE/MCSP write behavior and response handling insights, basis for verify-by-reread</span></li>
+      <li><a href="https://github.com/revlat/bes3-analyzer/tree/main" target="_blank" rel="noopener">revlat/bes3-analyzer</a><span>CAN bus datapoint analysis and cross-verification of light and service interval addresses</span></li>
+    </ul>
+    <p class="foot__legal">Unofficial project, not affiliated with or endorsed by Robert Bosch GmbH. Error code summaries reference the <a href="https://help.bosch-ebike.com/en/help-center" target="_blank" rel="noopener">Bosch eBike Help Center</a>.</p>
+  </div>
+</footer>
+
+<div class="modal" id="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal__panel">
+    <h2 class="modal__title" id="modalTitle"></h2>
+    <div class="modal__body" id="modalBody"></div>
+    <div class="modal__actions" id="modalActions"></div>
+  </div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="web/debug-log.js"></script>
+<script src="src/address-registry.generated.js"></script>
+<script src="src/protocol.js"></script>
+<script src="src/messageTypes.js"></script>
+<script src="web/workshop/usb-ack.js"></script>
+<script src="web/transport-webusb.js"></script>
+<script src="web/vendor/jspdf.umd.min.js"></script>
+<script src="web/workshop/local-assets.js"></script>
+<script src="web/workshop/part-images.js"></script>
+<script src="web/workshop/issues.js"></script>
+<script src="web/workshop/write-policy.js"></script>
+<script src="web/workshop/engine.js"></script>
+<script src="web/workshop/battery-health.js"></script>
+<script src="web/workshop/registry-browser.js"></script>
+<script src="web/workshop/demo-data.js"></script>
+<script src="web/workshop/demo.js"></script>
+<script src="web/workshop/report-pdf.js"></script>
+<script src="web/workshop/connection-doctor.js"></script>
+<script src="web/workshop/ui.js"></script>
+</body>
+</html>
