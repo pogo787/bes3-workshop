@@ -30,7 +30,6 @@
       <button class="tab" data-tab="read" aria-current="page">Overview</button>
       <button class="tab" data-tab="write">Configure</button>
       <button class="tab" data-tab="report">Diagnostic Report</button>
-      <button class="tab" data-tab="registry">Registry</button>
       <button class="tab" data-tab="log">Session Log</button>
     </nav>
 
@@ -39,6 +38,9 @@
       <button class="btn btn--primary btn--sm" id="btnTopReconnect" hidden>Reconnect</button>
       <button class="btn btn--ghost btn--sm" id="btnReread" hidden>Re-read</button>
       <button class="btn btn--ghost btn--sm" id="btnDisconnect" hidden>Disconnect</button>
+      <button class="icon-btn" id="btnPhotos" data-act="loadPhotos" data-state="idle" aria-label="Load component photos" title="Component photos: not loaded. Click to load them from cdn.jsdelivr.net for this session (an external request). Without them the Workshop uses local vector icons.">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m4 17 5-4 3.5 3 3-2.5 4.5 3.5"/></svg>
+      </button>
       <button class="icon-btn" id="btnTheme" aria-label="Toggle light/dark theme" title="Toggle light/dark theme">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
       </button>
@@ -52,14 +54,16 @@
   <section class="view view--start" id="view-start">
     <div class="start">
       <div class="start__copy">
-        <p class="eyebrow">Bosch Smart System · WebUSB · 100% In-Browser</p>
+        <p class="eyebrow">Bosch Smart System · WebUSB &amp; Web Bluetooth · 100% In-Browser</p>
         <h1 class="start__title">Read. Configure.<br>Document.</h1>
-        <p class="start__lead">Connect your eBike via a USB data cable. BES3 Workshop reads all key component and diagnostic data, unlocks the bike light output, configures light wattage and service intervals, checks System IDs, and exports a multi-page PDF diagnostic report. Every write is automatically re-read from the bike and verified.</p>
+        <p class="start__lead">Connect your eBike via USB-C or Web Bluetooth. BES3 Workshop reads all key component and diagnostic data, streams official BLE live telemetry, unlocks the bike light output, configures light wattage and service intervals, checks System IDs, and exports a multi-page PDF diagnostic report. Every write is automatically re-read from the bike and verified.</p>
         <div class="start__cta">
           <button class="btn btn--primary btn--lg" id="btnConnect">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v13"/><path d="m8 6 4-4 4 4"/><path d="M7 11v2a5 5 0 0 0 10 0v-2"/><path d="M12 18v4"/></svg>
             Connect eBike via USB
           </button>
+          <button class="btn btn--ghost btn--lg" id="btnConnectBle">Connect via Bluetooth (MCSP)</button>
+          <button class="btn btn--ghost btn--lg" id="btnConnectBleLive">Live Data BLE (Telemetry)</button>
           <button class="btn btn--ghost btn--lg" id="btnDemo">Try the simulated demo</button>
         </div>
         <p class="start__file">or <button class="link" id="btnOpenFile">open a saved readout (.json)</button> – offline, no bike required
@@ -95,8 +99,6 @@
   <section class="view" id="view-write" hidden></section>
   <!-- REPORT -->
   <section class="view" id="view-report" hidden></section>
-  <!-- REGISTRY -->
-  <section class="view" id="view-registry" hidden></section>
   <!-- LOG -->
   <section class="view" id="view-log" hidden></section>
 </main>
@@ -131,14 +133,14 @@
 <script src="src/messageTypes.js"></script>
 <script src="web/workshop/usb-ack.js"></script>
 <script src="web/transport-webusb.js"></script>
+<script src="web/transport-webble.js"></script>
+<script src="web/transport-webble-mcsp.js"></script>
 <script src="web/vendor/jspdf.umd.min.js"></script>
 <script src="web/workshop/local-assets.js"></script>
 <script src="web/workshop/part-images.js"></script>
 <script src="web/workshop/issues.js"></script>
 <script src="web/workshop/write-policy.js"></script>
 <script src="web/workshop/engine.js"></script>
-<script src="web/workshop/battery-health.js"></script>
-<script src="web/workshop/registry-browser.js"></script>
 <script src="web/workshop/demo-data.js"></script>
 <script src="web/workshop/demo.js"></script>
 <script src="web/workshop/report-pdf.js"></script>

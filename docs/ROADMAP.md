@@ -22,7 +22,7 @@ the staged batch approval flow.
 - Consistent experimental/evidence labels on every operation.
 - Supporting docs: [`investigation-light-power.md`](investigation-light-power.md),
   [`hardware-test-plan.md`](hardware-test-plan.md),
-  [`proposal-general-config.md`](proposal-general-config.md),
+  `proposal-general-config.md`,
   `classic-reader-separation.md`.
 
 ## Near term
@@ -44,7 +44,7 @@ the staged batch approval flow.
 ## Mid term
 
 5. **Registry-driven general configuration** —
-   [`proposal-general-config.md`](proposal-general-config.md).
+   `proposal-general-config.md`.
 6. **Live-hardware validation, read-only first** —
    [`hardware-test-plan.md`](hardware-test-plan.md), Phases 1–2.
 7. **Per-mutation approval for fault clearing**, so live fault clearing can be

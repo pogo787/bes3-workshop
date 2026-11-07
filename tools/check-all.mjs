@@ -259,7 +259,7 @@ const ALLOWED_PHOTO_CONST_URL = 'https://cdn.jsdelivr.net/gh/rweijnen/bosch-bes3
 const ESCAPING_HELPERS = ['esc', 'escNum', 'escColor'];
 const SAFE_HELPERS = [
   'chip', 'chipsRow', 'opChip', 'experimentalChip', 'diffRow', 'issueCard', 'rawDetails',
-  'connBanner', 'bikeSvg', 'partImg', 'photoLoadControl', 'opt', 'fmtDate', 'fmtDateTime', 'fmtKm', 'fmtW',
+  'connBanner', 'bleLiveCard', 'bikeSvg', 'partImg', 'opt', 'fmtDate', 'fmtDateTime', 'fmtKm', 'fmtW',
   'yesNo', 'versionLabel', 'kpi', 'serviceText', 'lightConfigLabel', 'summary', 'esc',
   'catalogBtn', 'stack', 'legend', 'compCards', 'remoteProbeTable', 'remoteProbeBlock', 'rowHtml', 'fmt',
   'pendingPanel', 'renderLogRow', 'renderLogHistory', 'serviceReasons',
@@ -267,14 +267,14 @@ const SAFE_HELPERS = [
 // These allow-listed builders render device- or file-derived values. Their
 // bodies are scanned as well, so an allow-list entry cannot hide an unescaped
 // interpolation inside a nested template.
-const SCANNED_HELPERS = ['compCards', 'remoteProbeTable', 'rowHtml', 'legend', 'stack', 'catalogBtn', 'modeRows', 'pendingPanel', 'renderLogRow', 'renderLogHistory', 'photoLoadControl', 'serviceReasons'];
+const SCANNED_HELPERS = ['compCards', 'remoteProbeTable', 'rowHtml', 'legend', 'stack', 'catalogBtn', 'modeRows', 'pendingPanel', 'renderLogRow', 'renderLogHistory', 'serviceReasons', 'bleLiveCard'];
 // Allow-listed fragments: whole HTML fragments built by the app above (never
 // raw device or file text).
 const SAFE_FRAGMENTS = [
   'badge', 'extra', 'inner', 'ic', 'rows', 'compCards', 'resultsHtml', 'friendly',
   'banner', 'writeLabCard', 'authNotice', 'demoNote', 'modeRows', 'compChips',
   'reportUrl', 'stamp', 'stack', 'legend', 'bikeSvg', 'nextYear', 'statsNote',
-  'img', 'emptyRows', 'batteryCard',
+  'img', 'emptyRows',
 ];
 // Allow-listed member expressions: constants and numeric helpers.
 const SAFE_MEMBERS = [
@@ -783,7 +783,7 @@ for (const file of jsFilesIn(path.join(repo, 'web', 'workshop'))) {
 // in them, not only an `innerHTML =` assignment, so a builder that returns
 // markup cannot bypass the escaping rule.
 const FEATURE_HTML_FILES = [
-  'connection-doctor.js', 'battery-health.js', 'registry-browser.js',
+  'connection-doctor.js',
 ];
 for (const name of FEATURE_HTML_FILES) {
   const file = path.join(repo, 'web', 'workshop', name);

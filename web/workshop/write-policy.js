@@ -21,7 +21,7 @@
   // the minor number for features and the patch number for fixes; keep the top
   // entry of docs/CHANGELOG.md in step (a source check enforces this). The
   // engine and UI read this from the policy object.
-  const VERSION = { version: '0.43.2', date: '2026-10-25' };
+  const VERSION = { version: '0.48.0', date: '2026-11-07' };
 
   // Every operation is experimental and carries an evidence label:
   //   observed-working  — a change was observed on at least one real bike

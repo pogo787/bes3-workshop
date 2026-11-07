@@ -315,10 +315,14 @@
     log: [], // writer history
     logHistory: [], // prior sessions' writer history (newest session first)
     lastUnverifiedWrite: null, // most recent interrupted-after-transmission step from a prior session
+    transportKind: null, // 'usb' | 'ble-mcsp' | 'ble-live' | 'demo' | null
+    bleLive: null, // { active, deviceName, values } when connected via official Live Data BLE
   };
 
   let transport = null;
+  let liveBleTransport = null;
   let connectedDevice = null;
+  let connectedBleDevice = null;
   let seq = 0;
   let busy = Promise.resolve();
   let busyCount = 0;
@@ -1302,6 +1306,7 @@
       throw err;
     }
     transport = nextTransport;
+    state.transportKind = 'usb';
     state.deviceName = device.productName || 'Bosch eBike';
     state.live = true;
     state.demo = false;
@@ -1331,13 +1336,220 @@
     connectedDevice = null;
   }
 
+  function onBleDisconnect() {
+    if (state.bleLive && state.bleLive.active) {
+      state.bleLive.active = false;
+      state.connectionLost = true;
+      state.connectionLostReason = 'Bluetooth Live Data connection was disconnected';
+      emit('connectionlost', { reason: state.connectionLostReason });
+      emit('change');
+      return;
+    }
+    handleTransportLoss('Bluetooth connection was disconnected');
+  }
+  function removeBleDisconnectListener() {
+    try {
+      if (connectedBleDevice && connectedBleDevice.removeEventListener) {
+        connectedBleDevice.removeEventListener('gattserverdisconnected', onBleDisconnect);
+      }
+    } catch (_) { /* ignore */ }
+    connectedBleDevice = null;
+  }
+
+  function applyLiveDataToValues(live) {
+    if (!live || typeof live !== 'object') return;
+    if (Number.isFinite(live.odometerMeters)) {
+      state.values['DriveUnit.ODOMETER'] = {
+        status: 'ok',
+        value: live.odometerMeters,
+        display: (live.odometerMeters / 1000).toFixed(1) + ' km',
+        hex: '',
+      };
+    }
+    if (Number.isFinite(live.batterySocPercent)) {
+      state.values['Battery.STATE_OF_CHARGE'] = {
+        status: 'ok',
+        value: live.batterySocPercent,
+        display: live.batterySocPercent + ' %',
+        hex: '',
+      };
+    }
+    if (Number.isFinite(live.cadenceRpm)) {
+      state.values['DriveUnit.AVERAGE_RIDER_CADENCE'] = {
+        status: 'ok',
+        value: live.cadenceRpm,
+        display: live.cadenceRpm + ' rpm',
+        hex: '',
+      };
+    }
+    if (typeof live.bikeLight === 'string') {
+      const on = live.bikeLight === 'ON';
+      const known = live.bikeLight === 'ON' || live.bikeLight === 'OFF';
+      if (known) {
+        state.values['DriveUnit.BIKE_LIGHT_AVAILABLE'] = { status: 'ok', value: true, display: 'yes', hex: '' };
+        state.values['DriveUnit.BIKE_LIGHT'] = { status: 'ok', value: on, display: on ? 'on' : 'off', hex: '' };
+      }
+    }
+    if (typeof live.systemLocked === 'boolean') {
+      state.values['RemoteControl.SYSTEM_LOCKED'] = {
+        status: 'ok',
+        value: live.systemLocked,
+        display: live.systemLocked ? 'locked' : 'unlocked',
+        hex: '',
+      };
+    }
+    if (Number.isFinite(live.timeUnixSeconds) && live.timeUnixSeconds > 0) {
+      state.values['RemoteControl.TIME'] = {
+        status: 'ok',
+        value: live.timeUnixSeconds,
+        display: new Date(live.timeUnixSeconds * 1000).toISOString(),
+        hex: '',
+      };
+    }
+    state.components = { DriveUnit: true, Battery: true, RemoteControl: true };
+  }
+
+  async function connectBleMcsp() {
+    if (typeof navigator === 'undefined' || !navigator.bluetooth) {
+      throw new Error('This browser does not support Web Bluetooth. Please use Chrome or Edge.');
+    }
+    if (!window.Bes3BleMcsp || typeof window.Bes3BleMcsp.requestMcspDevice !== 'function') {
+      throw new Error('The BLE MCSP transport module is not loaded.');
+    }
+    let device;
+    try {
+      device = await window.Bes3BleMcsp.requestMcspDevice();
+    } catch (err) {
+      if (!transport && !state.live && !state.bleLive) {
+        state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+        emit('change');
+      }
+      throw err;
+    }
+    if (state.live || transport || state.bleLive) await disconnect();
+    guard.reset();
+    clearRemoteProbe();
+    state.mode = 'connecting';
+    emit('change');
+    const nextTransport = new window.Bes3BleMcsp.Bes3BleMcspTransport(device);
+    try {
+      await nextTransport.open();
+      if (device && device.addEventListener) {
+        connectedBleDevice = device;
+        device.addEventListener('gattserverdisconnected', onBleDisconnect);
+      }
+      if (typeof nextTransport.waitForBikeReady === 'function') {
+        await nextTransport.waitForBikeReady();
+      }
+    } catch (err) {
+      removeBleDisconnectListener();
+      try { if (nextTransport.close) await nextTransport.close(); } catch (_) { /* ignore */ }
+      state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+      emit('change');
+      throw err;
+    }
+    transport = nextTransport;
+    state.transportKind = 'ble-mcsp';
+    state.deviceName = (device && device.name) || 'Bosch eBike (BLE)';
+    state.live = true;
+    state.demo = false;
+    state.simulatedExport = false;
+    state.connectionLost = false;
+    state.connectionLostReason = null;
+    consecutiveFailures = 0;
+    archiveSessionLog();
+    state.log = [];
+    state.log.push(versionLogEntry());
+    dlog('workshop', 'connected via BLE MCSP ' + state.deviceName);
+    startKeepalive();
+    await drain(150);
+    await readAll();
+  }
+
+  async function connectLiveDataBle() {
+    if (typeof navigator === 'undefined' || !navigator.bluetooth) {
+      throw new Error('This browser does not support Web Bluetooth. Please use Chrome or Edge.');
+    }
+    if (!window.Bes3LiveDataBle || typeof window.Bes3LiveDataBle.requestLiveDataDevice !== 'function') {
+      throw new Error('The Live Data BLE transport module is not loaded.');
+    }
+    let device;
+    try {
+      device = await window.Bes3LiveDataBle.requestLiveDataDevice();
+    } catch (err) {
+      if (!transport && !state.live && !state.bleLive) {
+        state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+        emit('change');
+      }
+      throw err;
+    }
+    if (state.live || transport || state.bleLive) await disconnect();
+    guard.reset();
+    clearRemoteProbe();
+    state.mode = 'connecting';
+    emit('change');
+    const nextLive = new window.Bes3LiveDataBle.Bes3LiveDataBleTransport(device);
+    let initial = {};
+    try {
+      await nextLive.connect();
+      initial = await nextLive.readOnce();
+      await nextLive.subscribe((partial) => {
+        if (!state.bleLive) return;
+        Object.assign(state.bleLive.values, partial);
+        applyLiveDataToValues(state.bleLive.values);
+        state.readAt = new Date();
+        emit('change');
+      });
+    } catch (err) {
+      try { nextLive.disconnect(); } catch (_) { /* ignore */ }
+      state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+      emit('change');
+      throw err;
+    }
+    liveBleTransport = nextLive;
+    if (device && device.addEventListener) {
+      connectedBleDevice = device;
+      device.addEventListener('gattserverdisconnected', onBleDisconnect);
+    }
+    state.values = {};
+    state.assistModes = [];
+    state.issues = [];
+    state.issuesScanned = false;
+    state.issuesTruncated = false;
+    state.bleLive = {
+      active: true,
+      deviceName: (device && device.name) || 'Bosch eBike (Live Data BLE)',
+      values: Object.assign({}, initial),
+    };
+    applyLiveDataToValues(state.bleLive.values);
+    // Ensure values is non-empty so the Overview renders even if initial readOnce was empty.
+    if (!Object.keys(state.values).length) {
+      state.values['DriveUnit.PRODUCT_NAME'] = { status: 'ok', value: 'Bosch Smart System (Live Data BLE)', display: 'Bosch Smart System (Live Data BLE)', hex: '' };
+    }
+    state.transportKind = 'ble-live';
+    state.deviceName = state.bleLive.deviceName;
+    state.live = false;
+    state.demo = false;
+    state.simulatedExport = false;
+    state.connectionLost = false;
+    state.connectionLostReason = null;
+    state.readAt = new Date();
+    state.mode = 'file';
+    emit('change');
+  }
+
   async function disconnect() {
     stopKeepalive();
     removeUsbDisconnectListener();
+    removeBleDisconnectListener();
     guard.reset();
     clearRemoteProbe();
     try { if (transport && transport.close) await transport.close(); } catch (_) { /* ignore */ }
+    try { if (liveBleTransport && liveBleTransport.disconnect) liveBleTransport.disconnect(); } catch (_) { /* ignore */ }
     transport = null;
+    liveBleTransport = null;
+    state.bleLive = null;
+    state.transportKind = null;
     state.live = false;
     state.demo = false;
     state.simulatedExport = false;
@@ -1389,6 +1601,7 @@
     transport = window.Bes3WorkshopDemo.createFakeTransport();
     state.live = true;
     state.demo = true;
+    state.transportKind = 'demo';
     state.simulatedExport = false;
     state.connectionLost = false;
     state.connectionLostReason = null;
@@ -1725,7 +1938,7 @@
   }
 
   window.Bes3Workshop = {
-    state, on, off, connect, disconnect, closeReadout, startDemo, readAll, readKey, Writers, runPlan, clearFaultMemory,
+    state, on, off, connect, connectBleMcsp, connectLiveDataBle, disconnect, closeReadout, startDemo, readAll, readKey, Writers, runPlan, clearFaultMemory,
     probeRemoteRegisters, remoteProbeCandidates,
     importReaderReport, importWorkshop, exportState, setExperimental,
     util: { varint, encodeServiceDue, decodeServiceDue, encodeField1Varint, decodeField1Varint, encodeEnumArg, encodeStringArg, encodeUuidPayload, decodeUuidBytes, addrOf, entryOf, registryWritable, toHex, interpret },

@@ -293,29 +293,45 @@
     return k ? 'web/parts/' + t[k] : null;
   }
 
-  // Shared component-photo control used on both the Overview and the report
-  // tab. A button with an explicit state instead of a checkbox. Session-only,
-  // OFF by default, and the note states that loading contacts the upstream host.
+  // Component photos are loaded once per session from the header button and are
+  // then used in every tab (Overview component cards and the PDF report). The
+  // button states what happens: an external request to cdn.jsdelivr.net, no
+  // storage, off by default.
   let photoStatus = 'idle'; // idle | loading | loaded | failed
   function photoStatusText() {
     const P = window.Bes3PartImages;
-    if (!P || typeof P.isRemoteOptIn !== 'function' || !P.isRemoteOptIn()) return 'Not loaded. Local vector icons are used.';
-    if (photoStatus === 'loading') return 'Loading from cdn.jsdelivr.net…';
-    if (photoStatus === 'loaded') return 'Loaded for this session.';
-    if (photoStatus === 'failed') return 'Loading failed; the report uses vector icons.';
-    return 'Not loaded. Local vector icons are used.';
+    if (!P || typeof P.isRemoteOptIn !== 'function' || !P.isRemoteOptIn()) return 'not loaded';
+    if (photoStatus === 'loading') return 'loading';
+    if (photoStatus === 'loaded') return 'loaded';
+    if (photoStatus === 'failed') return 'failed';
+    return 'not loaded';
   }
-  function photoLoadControl(context) {
+  function photoTitleText() {
     const P = window.Bes3PartImages;
-    if (!P || typeof P.isRemoteOptIn !== 'function') return '';
-    const suffix = String(context || 'default');
-    return `<div style="margin-top:10px">
-      <p class="field__hint" style="margin:0 0 6px">Component photos are optional and stay session-only; they are OFF by default. Loading them contacts <span class="mono">cdn.jsdelivr.net</span> (an external request). Without them the Workshop uses local vector icons.</p>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button type="button" class="btn btn--ghost btn--sm" data-act="loadPhotos" id="photoBtn-${esc(suffix)}"${photoStatus === 'loading' ? ' disabled' : ''}>${photoStatus === 'loaded' ? 'Reload component photos' : 'Load component photos'}</button>
-        <span class="field__hint" id="photoState-${esc(suffix)}" role="status">${esc(photoStatusText())}</span>
-      </div>
-    </div>`;
+    if (!P || typeof P.preloadPdfImages !== 'function') {
+      return 'Component photos are not available in this build.';
+    }
+    if (photoStatus === 'loading') {
+      return 'Component photos: loading from cdn.jsdelivr.net… (external request, session only)';
+    }
+    if (photoStatus === 'loaded') {
+      return 'Component photos: loaded for this session from cdn.jsdelivr.net. They are used in every tab and in the PDF report. Click to reload.';
+    }
+    if (photoStatus === 'failed') {
+      return 'Component photos: loading failed. The Workshop uses local vector icons. Click to try again.';
+    }
+    return 'Component photos: not loaded. Click to load them once from cdn.jsdelivr.net for this session (an external request). They are then used in every tab and in the PDF report.';
+  }
+  function updatePhotoButton() {
+    const btn = $('btnPhotos');
+    if (!btn) return;
+    const P = window.Bes3PartImages;
+    const available = !!(P && typeof P.preloadPdfImages === 'function');
+    btn.hidden = !available;
+    btn.disabled = !available || photoStatus === 'loading';
+    btn.dataset.state = photoStatus;
+    btn.setAttribute('aria-label', 'Component photos: ' + photoStatusText());
+    btn.title = photoTitleText();
   }
 
   // ------------------------------------------------------------ chrome
@@ -323,7 +339,7 @@
   function setTab(t) {
     tab = t;
     document.querySelectorAll('.tab').forEach((b) => b.setAttribute('aria-current', b.dataset.tab === t ? 'page' : 'false'));
-    ['read', 'write', 'report', 'registry', 'log'].forEach((v) => { $(`view-${v}`).hidden = v !== t || !hasData(); });
+    ['read', 'write', 'report', 'log'].forEach((v) => { $(`view-${v}`).hidden = v !== t || !hasData(); });
     $('view-start').hidden = hasData() || S.mode === 'reading' || S.mode === 'connecting';
     render();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -349,9 +365,41 @@
       return `${unverifiedNote}<div class="notice notice--bad conn-banner" role="alert">${ICON.warn}<div class="conn-banner__text"><strong>Connection lost.</strong> ${esc(r)} The last readout stays visible; configuration is locked until you reconnect.</div><button class="btn btn--primary btn--sm" data-act="reconnect">Reconnect</button></div>`;
     }
     if (!W.isLive && hasData() && S.mode === 'file') {
-      return `${unverifiedNote}<div class="notice conn-banner">${ICON.info}<div class="conn-banner__text"><strong>Not connected.</strong> You are viewing a saved readout. Connect the eBike via USB for live values and configuration.</div><button class="btn btn--primary btn--sm" data-act="reconnect">Connect</button></div>`;
+      if (S.bleLive && S.bleLive.active) {
+        return `${unverifiedNote}<div class="notice conn-banner">${ICON.info}<div class="conn-banner__text"><strong>Live Data BLE telemetry active (${esc(S.bleLive.deviceName || 'Bosch eBike')}).</strong> Streaming Bosch's official read-only BLE Live Data Interface. For full component diagnostics or configuration writes, connect via USB or Bluetooth (MCSP).</div></div>`;
+      }
+      return `${unverifiedNote}<div class="notice conn-banner">${ICON.info}<div class="conn-banner__text"><strong>Not connected.</strong> You are viewing a saved readout. Connect the eBike via USB or Bluetooth for live values and configuration.</div><button class="btn btn--primary btn--sm" data-act="reconnect">Connect</button></div>`;
     }
     return unverifiedNote;
+  }
+
+  function bleLiveCard() {
+    if (!S.bleLive) return '';
+    const v = S.bleLive.values || {};
+    const has = (k) => Object.prototype.hasOwnProperty.call(v, k) && v[k] !== null && v[k] !== undefined;
+    const yn = (b) => (b ? 'yes' : 'no');
+    const items = [
+      ['Speed', has('speedKmh') ? Number(v.speedKmh).toFixed(1) + ' km/h' : '–'],
+      ['Cadence', has('cadenceRpm') ? String(v.cadenceRpm) + ' rpm' : '–'],
+      ['Rider power', has('riderPowerW') ? String(v.riderPowerW) + ' W' : '–'],
+      ['Ambient brightness', has('ambientBrightnessLux') ? Number(v.ambientBrightnessLux).toFixed(1) + ' lux' : '–'],
+      ['Battery SoC', has('batterySocPercent') ? String(v.batterySocPercent) + ' %' : '–'],
+      ['Bike time (UTC)', has('timeUnixSeconds') ? new Date(Number(v.timeUnixSeconds) * 1000).toISOString() : '–'],
+      ['Odometer', has('odometerMeters') ? (Number(v.odometerMeters) / 1000).toFixed(1) + ' km' : '–'],
+      ['Bike light', has('bikeLight') ? String(v.bikeLight) : '–'],
+      ['System locked', has('systemLocked') ? yn(v.systemLocked) : '–'],
+      ['Charger connected', has('chargerConnected') ? yn(v.chargerConnected) : '–'],
+      ['Light reserve', has('lightReserveState') ? yn(v.lightReserveState) : '–'],
+      ['Diagnosis tool connected', has('diagnosisProgramActive') ? yn(v.diagnosisProgramActive) : '–'],
+      ['Bike not driving', has('bikeNotDriving') ? yn(v.bikeNotDriving) : '–'],
+    ];
+    const dl = items.map(([label, valStr]) => '<dt>' + esc(label) + '</dt><dd class="mono">' + esc(valStr) + '</dd>').join('');
+    const badge = S.bleLive.active
+      ? '<span class="chip chip--ok">Live BLE stream</span>'
+      : '<span class="chip chip--warn">Disconnected</span>';
+    return '<div class="section" id="bleLiveSection"><div class="section__head"><div><h2 class="section__title">Bluetooth Live Data telemetry</h2>'
+      + '<p class="section__sub">Official Bosch eBike Live Data Interface (0000eb20-eaa2-11e9-81b4-2a2ae2dbcce4) · read-only real-time notifications</p></div>'
+      + badge + '</div><div class="card"><dl class="kv">' + dl + '</dl></div></div>';
   }
 
   function renderChrome() {
@@ -362,7 +410,8 @@
     if (S.mode === 'connecting') { st = 'busy'; txt = 'Connecting …'; }
     else if (S.mode === 'reading') { st = 'busy'; txt = 'Reading …'; }
     else if (S.demo && W.isLive) { st = 'demo'; txt = 'Demo · simulated'; }
-    else if (W.isLive) { st = 'live'; txt = 'Connected'; }
+    else if (W.isLive) { st = 'live'; txt = S.transportKind === 'ble-mcsp' ? 'Connected (BLE)' : 'Connected'; }
+    else if (S.bleLive && S.bleLive.active) { st = 'live'; txt = 'Live Data (BLE)'; }
     else if (S.connectionLost) { st = 'lost'; txt = 'Connection lost'; }
     else if (S.mode === 'file') { st = 'file'; txt = 'Saved readout'; }
     pill.dataset.state = st; $('connText').textContent = txt;
@@ -373,9 +422,10 @@
     $('btnDisconnect').hidden = !(W.isLive || S.mode === 'file');
     $('btnDisconnect').textContent = W.isLive ? 'Disconnect' : 'Close';
     $('progress').hidden = !busy;
+    updatePhotoButton();
     const showStart = !hasData() && !busy;
     $('view-start').hidden = !showStart;
-    ['read', 'write', 'report', 'registry', 'log'].forEach((v) => { $(`view-${v}`).hidden = !(hasData() && v === tab) && !(busy && v === 'read'); });
+    ['read', 'write', 'report', 'log'].forEach((v) => { $(`view-${v}`).hidden = !(hasData() && v === tab) && !(busy && v === 'read'); });
   }
 
   // ------------------------------------------------------------ READ view
@@ -577,7 +627,6 @@
     if (otherEff.visible) effModes.push({ name: 'Other', color: View.OTHER_COLOR, other: true, distance: otherD.value, energy: otherE.value });
     const effTotal = effModes.reduce((a, m) => a + effOf(m), 0);
 
-    const batteryCard = window.Bes3BatteryHealth ? window.Bes3BatteryHealth.render(d) : '';
     const modeRows = d.modes.filter((m) => m.udam).map((m) => `<tr>
       <td><span class="mode-name"><i style="background:${escColor(m.color)}"></i>${esc(m.name)}</span></td>
       <td class="num">${escNum(m.udam.assistLevel)} %</td><td class="num">${escNum(m.udam.accelerationResponse)} %</td>
@@ -585,6 +634,7 @@
       <td class="num">${escNum(m.udam.maximumMotorTorque)} Nm</td><td class="num">${escNum(m.udam.maximumMotorPower)} W</td></tr>`).join('');
 
     el.innerHTML = `${connBanner()}
+      ${bleLiveCard()}
       <div class="section">
         <div class="card bike">
           <div class="bike__main">
@@ -616,12 +666,10 @@
       </div>
 
       <div class="section">
-        <div class="section__head"><div><h2 class="section__title">Components</h2><p class="section__sub">Detected system components with part number and software version</p></div>${photoLoadControl('overview')}</div>
+        <div class="section__head"><div><h2 class="section__title">Components</h2><p class="section__sub">Detected system components with part number and software version</p></div></div>
         <div class="grid grid--comp">${compCards}</div>
         ${missingExtras.length ? `<p class="section__sub" style="margin-top:12px">Not installed: ${missingExtras.map((c) => `${esc(c.type)} (${esc(c.hint)})`).join(' · ')}</p>` : ''}
       </div>
-
-      ${batteryCard}
 
       ${d.issuesScanned || errCount ? `<div class="section" id="issues"><div class="section__head"><div><h2 class="section__title">Fault memory ${experimentalChip()}</h2>
           <p class="section__sub">${errCount ? `${esc(errLabel)} stored entr${errCount === 1 ? 'y' : 'ies'}${d.issuesTruncated ? ' (capped at 40 per component)' : ''} · error codes as shown in the Bosch apps` : 'No stored errors'}</p></div>
@@ -1904,7 +1952,6 @@
           <label>Customer reference<input class="input" id="rRef" placeholder="e.g. name, job number or frame number" value="${esc(reportOpts.ref)}"></label>
           <label>Notes<textarea id="rNotes" placeholder="e.g. light enabled, 6.0 W">${esc(reportOpts.notes)}</textarea></label>
           <label class="check"><input type="checkbox" id="rAnon" ${reportOpts.anonymize ? 'checked' : ''}> Anonymize identifiers (serial numbers, IDs, key lock number)</label>
-          ${photoLoadControl('report')}
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
             <button class="btn btn--primary" data-act="pdfDownload">Download PDF</button>
             <button class="btn btn--ghost" data-act="pdfPreview">Refresh preview</button>
@@ -1967,16 +2014,6 @@
         return `<div class="card table-wrap" style="margin-bottom:12px"><table class="t"><thead><tr><th>Time</th><th>Action</th><th>Sent</th><th>Before → After</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table></div>`;
       }).join('') + `</div>`;
   }
-  function renderRegistry() {
-    const el = $('view-registry');
-    if (!window.Bes3RegistryBrowser) {
-      el.innerHTML = '<div class="section"><p class="section__sub">The read-only registry browser is not loaded.</p></div>';
-      return;
-    }
-    el.innerHTML = window.Bes3RegistryBrowser.render();
-    window.Bes3RegistryBrowser.mount(el);
-  }
-
   function renderLog() {
     const el = $('view-log');
     const rows = S.log.slice().reverse().map(renderLogRow).join('');
@@ -2074,7 +2111,6 @@
     if (tab === 'read') renderRead();
     if (tab === 'write') renderWrite();
     if (tab === 'report') renderReport();
-    if (tab === 'registry') renderRegistry();
     if (tab === 'log') renderLog();
   }
 
@@ -2191,18 +2227,34 @@
     consentAsked = false;
   }
 
-  async function doConnect(keepCurrentTab = false) {
+  let lastConnectMethod = 'usb';
+
+  async function doConnect(keepCurrentTab = false, method = 'usb') {
     const accepted = await ensureRiskAccepted();
     if (!accepted) return;
-    try { if (!keepCurrentTab && !hasData()) tab = 'read'; await W.connect(); toast('eBike connected and read'); }
-    catch (err) {
+    lastConnectMethod = method;
+    try {
+      if (!keepCurrentTab && !hasData()) tab = 'read';
+      if (method === 'ble-mcsp') {
+        await W.connectBleMcsp();
+        toast('eBike connected via Bluetooth (MCSP) and read');
+      } else if (method === 'ble-live') {
+        await W.connectLiveDataBle();
+        tab = 'read';
+        render();
+        toast('Live Data BLE connected and streaming');
+      } else {
+        await W.connect();
+        toast('eBike connected and read');
+      }
+    } catch (err) {
       if (S.mode === 'connecting' || S.mode === 'reading') S.mode = Object.keys(S.values).length ? 'file' : 'idle';
       render();
       // The doctor only classifies the error and the state the UI already has;
       // it never opens a device or sends a frame.
       const body = window.Bes3ConnectionDoctor
         ? window.Bes3ConnectionDoctor.render(err, S)
-        : `<p>${esc((err && err.message) || String(err))}</p><p>Tips: Is the eBike switched on? Are you using a USB <strong>data</strong> cable? Are other diagnostic tabs closed? On Windows a WinUSB driver may be required (see README).</p>`;
+        : `<p>${esc((err && err.message) || String(err))}</p><p>Tips: Is the eBike switched on? Are you using a USB <strong>data</strong> cable or paired over Bluetooth? Are other diagnostic tabs closed?</p>`;
       await modal({ title: 'Connection failed', body, actions: [{ label: 'OK', value: true, cls: 'btn--primary' }] });
     }
   }
@@ -2225,21 +2277,27 @@
         else if (a === 'pdfPreview') previewPdf();
         else if (a === 'loadPhotos') {
           const P = window.Bes3PartImages;
-          if (P && typeof P.preloadPdfImages === 'function') {
+          if (P && typeof P.ensurePdfImages === 'function') {
             photoStatus = 'loading';
             P.setRemoteOptIn(true);
             render();
             try {
-              const res = await P.preloadPdfImages(summary().comps);
-              photoStatus = res && res.loaded > 0 ? 'loaded' : 'failed';
+              // The private tree ships the embedded photo map; the public tree
+              // converts the session's remote photos into embeddable JPEGs.
+              if (typeof P.loadEmbeddedPdfImages === 'function') await P.loadEmbeddedPdfImages();
+              const res = await P.ensurePdfImages(summary().comps);
+              const local = typeof P.hasLocalPhotos === 'function' && P.hasLocalPhotos();
+              photoStatus = local || res.converted > 0 ? 'loaded' : (res.failed > 0 ? 'failed' : 'idle');
             } catch (_) {
               photoStatus = 'failed';
             }
             render();
           }
         }
-        else if (a === 'connect') await doConnect(false);
-        else if (a === 'reconnect') await doConnect(true);
+        else if (a === 'connect') await doConnect(false, 'usb');
+        else if (a === 'connectBle') await doConnect(false, 'ble-mcsp');
+        else if (a === 'connectBleLive') await doConnect(false, 'ble-live');
+        else if (a === 'reconnect') await doConnect(true, lastConnectMethod);
         else if (a === 'idSyncRc') await applyIdSync();
         else if (a === 'clearIssues') await applyClearIssues();
         else if (a === 'advWrite') await guidedAdvancedWrite();
@@ -2263,8 +2321,10 @@
       await modal({ title: 'Action failed', body: `<p>${esc((err && err.message) || String(err))}</p>`, actions: [{ label: 'OK', value: true, cls: 'btn--primary' }] });
     }
   });
-  $('btnConnect').onclick = () => doConnect(false);
-  const trBtn = $('btnTopReconnect'); if (trBtn) trBtn.onclick = () => doConnect(true);
+  $('btnConnect').onclick = () => doConnect(false, 'usb');
+  const btnBle = $('btnConnectBle'); if (btnBle) btnBle.onclick = () => doConnect(false, 'ble-mcsp');
+  const btnBleLive = $('btnConnectBleLive'); if (btnBleLive) btnBleLive.onclick = () => doConnect(false, 'ble-live');
+  const trBtn = $('btnTopReconnect'); if (trBtn) trBtn.onclick = () => doConnect(true, lastConnectMethod);
   $('btnDemo').onclick = async () => { if (!(await ensureRiskAccepted())) return; if (!(await demoNotice())) return; onSessionChange(); tab = 'read'; await W.startDemo(); toast('Demo eBike read'); };
   $('btnReread').onclick = async () => {
     if (S.mode === 'reading' || S.mode === 'connecting' || W.busy) return;
@@ -2309,6 +2369,10 @@
     try { localStorage.setItem('bes3-workshop-theme', n); } catch (_) { /* ignore */ }
   };
   if (!navigator.usb) { $('usbWarn').hidden = false; $('btnConnect').disabled = true; }
+  if (!navigator.bluetooth) {
+    if (btnBle) btnBle.disabled = true;
+    if (btnBleLive) btnBleLive.disabled = true;
+  }
   window.addEventListener('beforeunload', (e) => { if (W.isLive && !S.demo) { e.preventDefault(); e.returnValue = ''; } });
 
   window.Bes3WorkshopUI = { summary, render, setTab };

@@ -104,6 +104,10 @@
   let localOverride = null;
   let missingSet = new Set(MISSING_UPSTREAM_FILES);
   const remotePdfCache = Object.create(null);
+  // file name -> upstream URL of the photo that was resolved for it. Filled
+  // whenever a remote photo is handed out, so the PDF report can convert the
+  // very same photos into embeddable JPEG data (see ensurePdfImages).
+  const remotePhotoUrls = Object.create(null);
 
   function fileFor(comp, code) {
     const t = MAP[comp];
@@ -146,8 +150,24 @@
     const file = fileFor(comp, code);
     if (!file) return null;
     if (hasLocalPhotos()) return 'web/parts/' + file;
-    if (remoteOptIn && !missingSet.has(file)) return UPSTREAM_IMAGE_BASE + file;
+    if (remoteOptIn && !missingSet.has(file)) {
+      const url = UPSTREAM_IMAGE_BASE + file;
+      remotePhotoUrls[file] = url;
+      return url;
+    }
     return null;
+  }
+
+  // The upstream URL of a photo, if this session already resolved it.
+  function remoteUrlFor(comp, code) {
+    const file = fileFor(comp, code);
+    if (!file) return null;
+    return remotePhotoUrls[file] || null;
+  }
+
+  function remoteUrlForFile(file) {
+    if (!file) return null;
+    return remotePhotoUrls[file] || null;
   }
 
   function getPdfImage(comp, code) {
@@ -201,23 +221,42 @@
     });
   }
 
+  // Converts the session's remote photos into JPEG data URLs that the PDF
+  // report can embed. It runs for every component of the current readout, so
+  // the report shows the photos that were loaded with the header button, not
+  // only the ones that happened to be visible on screen.
+  async function ensurePdfImages(comps, convert) {
+    if (!remoteOptIn) return { converted: 0, failed: 0 };
+    // Local photos (the private tree's embedded map) already provide the PDF
+    // images; no external request is needed for them.
+    if (hasLocalPhotos()) return { converted: 0, failed: 0 };
+    const list = Array.isArray(comps) ? comps : [];
+    const convertFn = typeof convert === 'function' ? convert : convertImageUrlToPdfEntry;
+    let converted = 0;
+    let failed = 0;
+    for (const c of list) {
+      if (!c || !c.present) continue;
+      const file = fileFor(c.key, c.code);
+      if (!file || missingSet.has(file)) continue;
+      if (remotePdfCache[file]) { converted++; continue; }
+      const url = remotePhotoUrls[file] || UPSTREAM_IMAGE_BASE + file;
+      const entry = await convertFn(url);
+      if (entry) {
+        remotePdfCache[file] = entry;
+        converted++;
+      } else {
+        failed++;
+      }
+    }
+    return { converted, failed };
+  }
+
   async function preloadPdfImages(comps) {
     if (!remoteOptIn || (window.Bes3PartImagesPdf && typeof window.Bes3PartImagesPdf === 'object')) {
       return { loaded: 0 };
     }
-    if (!Array.isArray(comps)) return { loaded: 0 };
-    let loaded = 0;
-    for (const c of comps) {
-      if (!c || !c.present) continue;
-      const file = fileFor(c.key, c.code);
-      if (!file || missingSet.has(file) || remotePdfCache[file]) continue;
-      const entry = await convertImageUrlToPdfEntry(UPSTREAM_IMAGE_BASE + file);
-      if (entry) {
-        remotePdfCache[file] = entry;
-        loaded++;
-      }
-    }
-    return { loaded };
+    const res = await ensurePdfImages(comps);
+    return { loaded: res.converted };
   }
 
   function clearPdfCache() {
@@ -262,7 +301,10 @@
     setMissingUpstreamFiles: { value: setMissingUpstreamFiles, enumerable: false, writable: true },
     isMissingUpstream: { value: isMissingUpstream, enumerable: false, writable: true },
     resolve: { value: resolve, enumerable: false, writable: true },
+    remoteUrlFor: { value: remoteUrlFor, enumerable: false, writable: true },
+    remoteUrlForFile: { value: remoteUrlForFile, enumerable: false, writable: true },
     getPdfImage: { value: getPdfImage, enumerable: false, writable: true },
+    ensurePdfImages: { value: ensurePdfImages, enumerable: false, writable: true },
     preloadPdfImages: { value: preloadPdfImages, enumerable: false, writable: true },
     clearPdfCache: { value: clearPdfCache, enumerable: false, writable: true },
     loadEmbeddedPdfImages: { value: loadEmbeddedPdfImages, enumerable: false, writable: true },

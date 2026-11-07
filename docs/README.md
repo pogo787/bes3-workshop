@@ -9,14 +9,14 @@ without an account, license, or partnership agreement — see the source PDF's
 Terms of Use ("fully public and open basis... no specific keys or other
 technical barriers required").
 
-It is a genuinely different thing from the rest of this repo's read path.
-A standalone transport used to live in `web/transport-webble.js`; it was
-removed in 0.20.1 because no shipped page loaded it. The protocol description
-below is kept for reference:
+It is a genuinely different thing from the rest of this repo's MCSP read path.
+`web/transport-webble.js` implements the official Live Data BLE transport, while
+`web/transport-webble-mcsp.js` implements the full MCSP/MessageBus protocol over
+BLE alongside `web/transport-webusb.js`:
 
-|  | Official Live Data Interface | This repo's MessageBus reads |
+|  | Official Live Data Interface (`transport-webble.js`) | MessageBus / MCSP (`transport-webusb.js`, `transport-webble-mcsp.js`) |
 |---|---|---|
-| Transport | BLE only | USB today; BLE planned |
+| Transport | BLE (`0000eb20-...`) | USB and BLE (`00000010-...`) |
 | Sanctioned by Bosch | Yes, explicitly, in writing | No — reverse-engineered |
 | Fields | ~13: speed, cadence, rider power, SoC, odometer, lock/charger/light state | 98 curated registers across 7 components |
 | Battery health (SoH), cycle count, serials, tuning-detection, region config | Not present | Present |
@@ -43,15 +43,15 @@ section.
 - `docs/internal/reviews/review-3/code-review.md` — the third
   review, covering the write path, decoders, import/export privacy, escaping,
   keepalive/reconnect, PDF, demo, tooling, documentation and licenses.
-- [`decision-write-flow.md`](decision-write-flow.md) — why Batch 6 replaced the
+- `docs/internal/decision-write-flow.md` — why Batch 6 replaced the
   per-write dialog with a staged batch and which gates did not change.
 - `docs/internal/review-triage.md` — what was done with every finding of
   the first review.
 - `docs/internal/review-triage-batch-4.md` — Batch 4 triage of
   the same review against the current tree.
-- [`image-map-proposal.md`](image-map-proposal.md) — analysis of the
+- `docs/internal/image-map-proposal.md` — analysis of the
   synchronous 383 KB PDF image map (M20), not implemented.
-- [`csp-proposal.md`](csp-proposal.md) — draft Content Security Policy (M15),
+- `docs/internal/csp-proposal.md` — draft Content Security Policy (M15),
   not active.
 - `docs/internal/review-pack-1.md` / `docs/internal/review-pack-2.md`
   — verbatim copies of the write-path source at the reviewed revision.
@@ -67,7 +67,7 @@ section.
   list with the Write Lab tier, writability and readability of all 895 entries.
 - [`hardware-test-plan.md`](hardware-test-plan.md) — staged plan for validating
   the Workshop against a real eBike, read-only first.
-- [`proposal-general-config.md`](proposal-general-config.md) — proposal for a
+- `docs/internal/proposal-general-config.md` — proposal for a
   registry-driven general configuration surface.
 - `docs/internal/classic-reader-separation.md` — historical
   proposal (superseded in 0.5.0, when the Classic Reader was removed and the

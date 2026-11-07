@@ -83,29 +83,6 @@ new Function('window', readFileSync(path.join(repo, 'web', 'workshop', 'connecti
 const DOCTOR = doctorWindow.Bes3ConnectionDoctor;
 if (!DOCTOR) throw new Error('connection-doctor.js did not expose window.Bes3ConnectionDoctor');
 
-const batteryWindow = {};
-new Function('window', readFileSync(path.join(repo, 'web', 'workshop', 'battery-health.js'), 'utf8'))(batteryWindow);
-const BATTERY = batteryWindow.Bes3BatteryHealth;
-if (!BATTERY) throw new Error('battery-health.js did not expose window.Bes3BatteryHealth');
-
-const registryWindow = {
-  Bes3Workshop: { isLive: false, readKey: async () => ({ status: 'ok', display: '42' }) },
-  Bes3WritePolicy: { genericTierMap: () => new Map([
-    ['Battery.STATE_OF_HEALTH', { tier: 'registry-readonly', reason: 'read-only in registry' }],
-    ['DriveUnit.PRODUCT_NAME', { tier: 'normal', reason: 'normal' }],
-  ]) },
-  Bes3AddressRegistry: { ADDRESS_REGISTRY: {
-    _meta: { registryVersion: '1.0.0', license: 'CC-BY-4.0', sourceUrl: 'https://github.com/rweijnen/bosch-bes3-reader', attribution: 'Bosch BES3 address registry — github.com/rweijnen/bosch-bes3-reader' },
-    addresses: [
-    { component: 'Battery', name: 'STATE_OF_HEALTH', address: 0x2210, label: 'State of health', readable: true, writable: false, kind: 'uint', source: 'test', confirmed: true },
-    { component: 'DriveUnit', name: 'PRODUCT_NAME', address: 0x1000, label: 'Product name', readable: true, writable: false, kind: 'string', source: 'test', confirmed: false },
-    { component: 'DriveUnit', name: 'WRITE_ONLY', address: 0x1001, label: 'Write-only test', readable: false, writable: true, kind: 'uint', source: 'test', confirmed: true },
-  ] } },
-};
-new Function('window', readFileSync(path.join(repo, 'web', 'workshop', 'registry-browser.js'), 'utf8'))(registryWindow);
-const REGISTRY_BROWSER = registryWindow.Bes3RegistryBrowser;
-if (!REGISTRY_BROWSER) throw new Error('registry-browser.js did not expose window.Bes3RegistryBrowser');
-
 function relativeLuminance(rgb) {
   const channel = (v) => {
     const c = v / 255;
@@ -174,26 +151,6 @@ check('connection doctor: classifies every known connect failure and falls back'
   assert(rendered.includes('Zadig'), 'the Windows Zadig steps are shown');
   assert(rendered.includes('&lt;script&gt;'), 'an error message is escaped');
   assert(!rendered.includes('<script>alert(1)</script>'), 'the raw error markup is not injected');
-});
-
-check('battery health: one threshold object, boundaries, missing data', () => {
-  const level = (d) => BATTERY.assess(d).level;
-  eq(level({ soh: 80 }), 'good', 'SoH 80 is good');
-  eq(level({ soh: 79 }), 'warn', 'SoH 79 is watch');
-  eq(level({ soh: 59 }), 'bad', 'SoH below 60 is concern');
-  eq(level({ cycles: 800 }), 'warn', '800 cycles is watch');
-  eq(level({ cycles: 1200 }), 'bad', '1200 cycles is concern');
-  eq(level({ cycles: 100, deliveredWh: 200 }), 'good', '2.0 Wh/cycle is good');
-  eq(level({ cycles: 100, deliveredWh: 190 }), 'warn', '1.9 Wh/cycle is watch');
-  eq(level({ cycles: 100, deliveredWh: 110 }), 'bad', '1.1 Wh/cycle is concern');
-  eq(level({ tMax: 45 }), 'unknown', '45 °C alone does not raise a level');
-  eq(level({ tMax: 45.1 }), 'warn', 'above 45 °C is watch');
-  eq(level({ tMax: 55.1 }), 'bad', 'above 55 °C is concern');
-  eq(level({}), 'unknown', 'no data is unknown');
-  assert(BATTERY.THRESHOLDS && BATTERY.THRESHOLDS.sohGood === 80, 'the threshold object is exposed');
-  const html = BATTERY.render({ soh: 90, cycles: 100, deliveredWh: 200, tMin: 5, tMax: 30 });
-  assert(html.includes('Heuristic, not a Bosch rating.'), 'the visible heuristic note is present');
-  assert(html.includes('Good'), 'the level is rendered');
 });
 
 check('other: total minus tracked parts, clamped and hidden at the display rounding', () => {
@@ -453,6 +410,17 @@ check('policy: a missing address registry fails closed without throwing', () => 
 
 // The quality gate's header must describe the checks it actually runs. Every
 // finding blocks; the old baseline/limitation split was removed.
+check('source: the component-photo button is a single header control (source check)', () => {
+  const html = readFileSync(path.join(repo, 'index.html'), 'utf8');
+  assert(/id="btnPhotos"/.test(html), 'the photo button is in the page');
+  assert(html.indexOf('id="btnPhotos"') < html.indexOf('<main'), 'the photo button lives in the header, above the views');
+  assert(/data-act="loadPhotos"/.test(html), 'the button triggers the shared load action');
+  const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
+  assert(!/photoLoadControl/.test(ui), 'there is no second, per-tab photo control');
+  assert(/function updatePhotoButton/.test(ui), 'the header button state is rendered from one place');
+  assert(/cdn\.jsdelivr\.net/.test(ui), 'the hover text names the external host');
+});
+
 check('source: check-all describes every check and has no baseline split', () => {
   const source = readFileSync(path.join(repo, 'tools', 'check-all.mjs'), 'utf8');
   assert(!/non-blocking BASELINE/i.test(source), 'the stale baseline wording is gone');
@@ -1668,7 +1636,7 @@ function createUiHarness(engineWindow) {
     },
   };
   const useFakeTimer = (fn) => { try { fn(); } catch (_) { /* ignore */ } return 0; };
-  for (const rel of ['web/workshop/part-images.js', 'web/workshop/issues.js', 'web/workshop/report-pdf.js', 'web/workshop/connection-doctor.js', 'web/workshop/battery-health.js', 'web/workshop/registry-browser.js']) {
+  for (const rel of ['web/workshop/part-images.js', 'web/workshop/issues.js', 'web/workshop/report-pdf.js', 'web/workshop/connection-doctor.js']) {
     const src = readFileSync(path.join(repo, rel), 'utf8');
     new Function('window', 'localStorage', src)(engineWindow, engineWindow.localStorage);
   }
@@ -1762,8 +1730,6 @@ try {
     'src/messageTypes.js',
     'web/workshop/write-policy.js',
     'web/workshop/engine.js',
-    'web/workshop/battery-health.js',
-    'web/workshop/registry-browser.js',
     'web/workshop/demo-data.js',
     'web/workshop/demo.js',
   ];
@@ -3805,30 +3771,6 @@ check('source: the light theme, the modal focus and the re-read control (source 
   // A DOM-level check for the real ui.js. The shim has no browser, no USB and no
   // network; it only exposes the elements and events the modal code touches.
   let ui = null;
-await checkAsync('registry browser: filters, readable-only read button and tier/evidence rows', async () => {
-  eq(REGISTRY_BROWSER.entries().length, 3, 'all registry entries are available');
-  eq(REGISTRY_BROWSER.filter('health').length, 1, 'search filters by label/name');
-  eq(REGISTRY_BROWSER.filter('0x2210').length, 1, 'search filters by hex address');
-  const tiers = registryWindow.Bes3WritePolicy.genericTierMap();
-  const offline = REGISTRY_BROWSER.rowsHtml('', tiers, false);
-  assert(offline.includes('data-reg-read'), 'a readable entry has a read button');
-  assert(offline.includes('disabled title="Connect'), 'the read button is disabled without a live connection');
-  assert(!offline.includes('data-component="DriveUnit" data-name="WRITE_ONLY"'), 'a non-readable entry has no read button');
-  assert(offline.includes('registry-readonly') && offline.includes('Confirmed · test'), 'tier and evidence are shown');
-  const html = REGISTRY_BROWSER.render();
-  assert(html.includes('Read-only.'), 'the read-only notice is visible');
-  assert(html.includes('data-act="probeRemote"'), 'the existing remote probe is reachable');
-  assert(!html.includes('data-act="write"') && !html.includes('data-write'), 'no write control is rendered');
-  registryWindow.Bes3Workshop.isLive = true;
-  let calls = 0;
-  registryWindow.Bes3Workshop.readKey = async () => { calls++; return { display: '42' }; };
-  const cell = { textContent: '–' };
-  await REGISTRY_BROWSER.readNow({ dataset: { component: 'Battery', name: 'STATE_OF_HEALTH', regRow: '0' }, textContent: '' }, { querySelector: () => cell });
-  eq(calls, 1, 'a readable entry is read');
-  eq(cell.textContent, '42', 'the result is shown');
-  await REGISTRY_BROWSER.readNow({ dataset: { component: 'DriveUnit', name: 'WRITE_ONLY', regRow: '2' }, textContent: '' }, { querySelector: () => cell });
-  eq(calls, 1, 'a non-readable entry is never read');
-});
 
   await checkAsync('UI sandbox: the fake DOM loads the real UI and accepts the risk warning', async () => {
     ui = createUiHarness(sandbox);
@@ -3883,70 +3825,6 @@ await checkAsync('registry browser: filters, readable-only read button and tier/
     sandbox.Bes3WorkshopUI.render();
     assert(!/Mini Remote|Probe remote registers|Not visible over USB/.test(read.innerHTML),
       'removing the marker hides the card again');
-    eq(writeFrames, 0, 'no write frames');
-    eq(rpcFrames, 0, 'no RPC frames');
-    await W.disconnect();
-  });
-
-  await checkAsync('UI battery health: heuristic note, section order and zero writes', async () => {
-    assert(ui, 'the UI sandbox loaded');
-    await ui.startDemo();
-    resetFrameCounters();
-    sandbox.Bes3WorkshopUI.render();
-    const view = ui.doc.getElementById('view-read');
-    assert(/Battery health/.test(view.innerHTML), 'the battery health card is rendered');
-    assert(/Heuristic, not a Bosch rating\./.test(view.innerHTML), 'the heuristic note is visible');
-    assert(view.innerHTML.indexOf('<h2 class="section__title">Components</h2>') < view.innerHTML.indexOf('id="batteryHealth"'), 'Components is rendered before Battery health');
-    assert(!/Readout comparison/.test(view.innerHTML), 'the readout comparison card is gone');
-    assert(!/Fault memory summary/.test(view.innerHTML), 'the duplicate fault summary is gone');
-    eq(writeFrames, 0, 'no write frames');
-    eq(rpcFrames, 0, 'no RPC frames');
-    await W.disconnect();
-  });
-
-  check('registry browser: provenance header names the source, licence, files, count and version', () => {
-    const src = REGISTRY_BROWSER.sourceSummary();
-    eq(src.upstream, 'rweijnen/bosch-bes3-reader', 'the upstream project is named');
-    eq(src.upstreamUrl, 'https://github.com/rweijnen/bosch-bes3-reader', 'the upstream link comes from the registry meta');
-    eq(src.licence, 'CC BY 4.0', 'the licence is shown as CC BY 4.0');
-    eq(src.sourceFile, 'src/address-registry.json', 'the source file is named');
-    eq(src.generatedFile, 'src/address-registry.generated.js', 'the generated file is named');
-    eq(src.count, 3, 'the entry count is reported');
-    eq(src.version, '1.0.0', 'the registry meta version is reported');
-    const html = REGISTRY_BROWSER.render();
-    for (const needle of ['rweijnen/bosch-bes3-reader', 'CC BY 4.0', 'src/address-registry.json', 'src/address-registry.generated.js', 'Entries</dt><dd>3</dd>', 'Registry version</dt><dd class="mono">1.0.0</dd>']) {
-      assert(html.includes(needle), 'the header shows ' + needle);
-    }
-  });
-
-  await checkAsync('UI registry browser: search and a readable read send no writes', async () => {
-    assert(ui, 'the UI sandbox loaded');
-    await ui.startDemo();
-    resetFrameCounters();
-    ui.switchTab('registry');
-    const view = ui.doc.getElementById('view-registry');
-    assert(/Address registry/.test(view.innerHTML), 'the registry view is rendered');
-    assert(/Read-only\./.test(view.innerHTML), 'the read-only notice is rendered');
-    assert(/rweijnen\/bosch-bes3-reader/.test(view.innerHTML), 'the provenance header is rendered');
-    assert(/CC BY 4\.0/.test(view.innerHTML), 'the licence is rendered in the view');
-    assert(/src\/address-registry\.json/.test(view.innerHTML), 'the source file is rendered in the view');
-    assert(/data-act="probeRemote"/.test(view.innerHTML), 'the existing remote probe is reachable');
-    assert(view.querySelectorAll('[data-reg-read]').length > 0, 'readable entries have a read button');
-    const input = view.querySelector('#regSearch');
-    assert(input, 'the search input is present');
-    input.value = 'STATE_OF_HEALTH';
-    input.oninput();
-    await sleep(0);
-    const rows = view.querySelector('#regRows');
-    assert(/STATE_OF_HEALTH/.test(rows.innerHTML), 'the search filters the rows');
-    const read = view.querySelector('[data-reg-read]');
-    assert(read, 'the filtered row has a read button');
-    const index = read.dataset.regRow;
-    const cell = view.querySelector('[data-reg-value="' + index + '"]');
-    assert(cell, 'the result cell is present');
-    await read.onclick();
-    await sleep(0);
-    assert(cell.textContent !== '–', 'the read result is shown');
     eq(writeFrames, 0, 'no write frames');
     eq(rpcFrames, 0, 'no RPC frames');
     await W.disconnect();
@@ -4330,19 +4208,30 @@ await checkAsync('registry browser: filters, readable-only read button and tier/
     assert(/<svg\b/i.test(readHtmlOff), 'default OFF renders generic SVG icons');
     eq(P.resolve('DriveUnit', 'BDU3740'), null, 'resolve returns null when local is missing and opt-in is OFF');
 
-    // 2. Opt-in ON via the shared button: URLs use the pinned base, in memory only.
-    const overviewBtn = ui.doc.getElementById('photoBtn-overview');
-    assert(overviewBtn && overviewBtn.tagName === 'BUTTON', 'the shared photo button is rendered on Overview');
+    // 2. Opt-in ON via the single header button: URLs use the pinned base, in memory only.
+    const headerBtn = ui.doc.getElementById('btnPhotos');
+    assert(headerBtn && headerBtn.id === 'btnPhotos', 'the photo button lives in the header');
     assert(!readHtmlOff.includes('remotePhotosOptIn'), 'the Overview checkbox is gone');
-    assert(/Not loaded/.test(ui.doc.getElementById('photoState-overview').textContent), 'the Overview state starts as not loaded');
+    assert(!readHtmlOff.includes('photoBtn-'), 'the Overview has no second photo control');
+    eq(headerBtn.dataset.state, 'idle', 'the header button starts as not loaded');
+    assert(/cdn\.jsdelivr\.net/.test(headerBtn.title || ''), 'the hover text explains the external request');
     const originalPreload = P.preloadPdfImages;
+    const originalEnsure = P.ensurePdfImages;
     P.preloadPdfImages = async () => ({ loaded: 1 });
+    P.ensurePdfImages = async () => ({ converted: 1, failed: 0 });
     await ui.dom.dispatchAction('loadPhotos');
     await sleep(0);
     eq(P.isRemoteOptIn(), true, 'the button enables remote photo opt-in in memory');
-    assert(/Loaded for this session/.test(ui.doc.getElementById('photoState-overview').textContent), 'the Overview button shows the loaded state');
+    eq(ui.doc.getElementById('btnPhotos').dataset.state, 'loaded', 'the header button shows the loaded state');
     const readHtmlOn = ui.doc.getElementById('view-read').innerHTML;
     assert(readHtmlOn.includes(P.UPSTREAM_IMAGE_BASE + 'ic_bdu374_performance_line_cx.webp'), 'opt-in ON renders pinned upstream URL');
+    // Loaded once -> every tab uses the photos (the opt-in is global state).
+    ui.switchTab('report');
+    await sleep(0);
+    assert(!ui.doc.getElementById('view-report').innerHTML.includes('photoBtn-'), 'the report tab has no second photo control');
+    eq(ui.doc.getElementById('btnPhotos').dataset.state, 'loaded', 'the header button keeps its state in every tab');
+    ui.switchTab('read');
+    await sleep(0);
 
     // 3. Missing local and remote -> falls back to generic icon (null).
     P.setMissingUpstreamFiles(['ic_bdu374_performance_line_cx.webp']);
@@ -4424,24 +4313,95 @@ await checkAsync('registry browser: filters, readable-only read button and tier/
     eq(addedImages, 0, 'no PDF images added when embedded module is absent and opt-in is OFF');
     eq(mutations, 0, 'photo source resolution and PDF build send zero write/RPC frames');
 
-    // 6. PDF tab: a button with explicit states replaces the checkbox.
+    // 5b. With photos loaded, the report draws the component photos and the
+    //     assistance-mode colours.
+    P.setRemoteOptIn(true);
+    const fakeEntries = {
+      'ic_bdu374_performance_line_cx.webp': { data: 'data:image/jpeg;base64,AAAA', size: [120, 80] },
+    };
+    const originalGetPdfImage = P.getPdfImage;
+    P.getPdfImage = (comp, code) => {
+      const file = originalGetPdfImage.call(P, comp, code);
+      if (file) return file;
+      const name = comp === 'DriveUnit' ? 'ic_bdu374_performance_line_cx.webp' : null;
+      return name ? fakeEntries[name] : null;
+    };
+    let imageCalls = 0;
+    const fillColors = [];
+    const swatchColors = [];
+    let currentFill = '';
+    sandbox.jspdf = {
+      jsPDF: function () {
+        return {
+          setProperties() {},
+          setFillColor(r, g, b) { currentFill = [r, g, b].join(','); fillColors.push(currentFill); },
+          setDrawColor() {},
+          setTextColor() {},
+          setFont() {},
+          setFontSize() {},
+          setLineWidth() {},
+          setLineCap() {},
+          setLineJoin() {},
+          rect() {},
+          roundedRect(x, y, w, h) { swatchColors.push({ color: currentFill, w, h }); },
+          line() {},
+          lines() {},
+          circle() {},
+          ellipse() {},
+          triangle() {},
+          text() {},
+          textWithLink() {},
+          getTextWidth(s) { return String(s || '').length * 1.8; },
+          splitTextToSize(s) { return [String(s || '')]; },
+          addPage() {},
+          addImage() { imageCalls++; },
+          output() { return new Blob([], { type: 'application/pdf' }); },
+          save() {},
+        };
+      },
+    };
+    const withPhotos = sandbox.Bes3WorkshopReport.build(sandbox.Bes3WorkshopUI.summary(), {
+      ref: '',
+      notes: '',
+      anonymize: false,
+      helpers: {
+        fmtDate: () => '2026-10-25',
+        fmtDateTime: () => '2026-10-25 12:00',
+        serviceText: () => 'Not set',
+        lightConfigLabel: () => 'Default',
+        partImg: (comp, code) => P.resolve(comp, code),
+        NF0: fmt,
+        NF1: fmt,
+        NF2: fmt,
+      },
+    });
+    assert(withPhotos, 'PDF builds with photos available');
+    assert(imageCalls > 0, 'the report embeds the loaded component photos (' + imageCalls + ')');
+    const modeColors = (sandbox.Bes3WorkshopUI.summary().modes || [])
+      .map((m) => m.color)
+      .filter((c) => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c))
+      .map((c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)].join(','));
+    assert(modeColors.length > 0, 'the readout reports assistance-mode colours');
+    assert(
+      swatchColors.some((s) => s.w === 2.7 && modeColors.includes(s.color)),
+      'the report draws a colour swatch for the assistance modes'
+    );
+    P.getPdfImage = originalGetPdfImage;
+    P.setRemoteOptIn(false);
+
+    // 6. The header button keeps its state and is the only photo control.
     P.setRemoteOptIn(false);
     ui.switchTab('report');
     await sleep(0);
-    const reportView = ui.doc.getElementById('view-report');
-    assert(reportView.querySelector('#photoBtn-report'), 'the shared photo button is rendered in the PDF tab');
-    assert(!reportView.querySelector('#rRemotePhotos'), 'the old PDF checkbox is gone');
-    assert(/cdn\.jsdelivr\.net/.test(reportView.innerHTML), 'the privacy note names the host');
-    assert(/Not loaded/.test(ui.doc.getElementById('photoState-report').textContent), 'the default state is not loaded');
-    P.preloadPdfImages = async () => ({ loaded: 1 });
-    await ui.dom.dispatchAction('loadPhotos');
-    await sleep(0);
-    assert(/Loaded for this session/.test(ui.doc.getElementById('photoState-report').textContent), 'the loaded state is shown');
+    assert(!ui.doc.getElementById('view-report').innerHTML.includes('photoBtn-'), 'the report tab has no second photo control');
+    assert(ui.doc.getElementById('btnPhotos'), 'the header button is present in the report tab');
     P.preloadPdfImages = async () => ({ loaded: 0 });
+    P.ensurePdfImages = async () => ({ converted: 0, failed: 1 });
     await ui.dom.dispatchAction('loadPhotos');
     await sleep(0);
-    assert(/Loading failed/.test(ui.doc.getElementById('photoState-report').textContent), 'the failed state is shown');
+    eq(ui.doc.getElementById('btnPhotos').dataset.state, 'failed', 'the failed state is shown on the header button');
     P.preloadPdfImages = originalPreload;
+    P.ensurePdfImages = originalEnsure;
     P.setRemoteOptIn(false);
     await W.disconnect();
   });
@@ -4602,6 +4562,117 @@ await checkAsync('Node USB transport & CLI: init handshake, exclusive mutex and 
   };
   const res = await cliMod.readOne(fakeCliTransport, 0x1800);
   assert(res && Array.from(res.payload).join(',') === '8,1', 'CLI readOne matches exact READ_RESPONSE and seq');
+});
+
+await checkAsync('Web Bluetooth transports: Live Data BLE decoder/stream and MCSP BLE peer handshake & address rewrite', async () => {
+  const bleWindow = {
+    __bes3Now: () => Date.now(),
+    __bes3Sleep: () => Promise.resolve(),
+  };
+  const fakeBluetooth = {};
+  new Function('window', 'navigator', readFileSync(path.join(repo, 'web', 'transport-webble.js'), 'utf8'))(bleWindow, { bluetooth: fakeBluetooth });
+  new Function('window', 'navigator', readFileSync(path.join(repo, 'web', 'transport-webble-mcsp.js'), 'utf8'))(bleWindow, { bluetooth: fakeBluetooth });
+
+  const LiveBle = bleWindow.Bes3LiveDataBle;
+  const McspBle = bleWindow.Bes3BleMcsp;
+  assert(LiveBle && LiveBle.decodeLiveData, 'transport-webble.js exposes Bes3LiveDataBle');
+  assert(McspBle && McspBle.Bes3BleMcspTransport, 'transport-webble-mcsp.js exposes Bes3BleMcsp');
+
+  // 1. Live Data BLE protobuf decoding (speed=25.50 km/h -> 2550, cadence=72, soc=84%, light=ON=2, locked=true, truncated tail ignored)
+  const sampleLive = Uint8Array.from([
+    0x08, 0xf6, 0x13,       // field 1 (speed): 2550 -> 25.5 km/h
+    0x10, 0x48,             // field 2 (cadence): 72 rpm
+    0x28, 0xfa, 0x01,       // field 5 (riderPower): 250 W
+    0x50, 0x54,             // field 10 (soc): 84 %
+    0x60, 0xe8, 0x07,       // field 12 (odometer): 1000 m
+    0x88, 0x01, 0x02,       // field 17 (bikeLight): 2 -> ON
+    0xa8, 0x01, 0x01,       // field 21 (systemLocked): true
+    0x08, 0x80,             // truncated varint at tail -> ignored safely
+  ]);
+  const decoded = LiveBle.decodeLiveData(sampleLive);
+  eq(decoded.speedKmh, 25.5, 'Live Data speed decoded');
+  eq(decoded.cadenceRpm, 72, 'Live Data cadence decoded');
+  eq(decoded.riderPowerW, 250, 'Live Data rider power decoded');
+  eq(decoded.batterySocPercent, 84, 'Live Data battery SoC decoded');
+  eq(decoded.odometerMeters, 1000, 'Live Data odometer decoded');
+  eq(decoded.bikeLight, 'ON', 'Live Data light state decoded');
+  eq(decoded.systemLocked, true, 'Live Data lock state decoded');
+
+  // 2. MCSP BLE segmentation framing, handshake, MobileApp peer responder, and 0x0e10 <-> 0x4180 address rewrite
+  const sentFrames = [];
+  let notifyListener = null;
+  const fakeGattDevice = {
+    name: 'Fake Smart System BLE',
+    id: 'ble-1',
+    gatt: {
+      async connect() {
+        return {
+          async getPrimaryService() {
+            return {
+              async getCharacteristic(uuid) {
+                if (uuid === McspBle.RX_CHARACTERISTIC_UUID) {
+                  return {
+                    addEventListener(_evt, fn) { notifyListener = fn; },
+                    removeEventListener() { notifyListener = null; },
+                    async startNotifications() {},
+                  };
+                }
+                return {
+                  async writeValueWithoutResponse(frame) {
+                    const copy = new Uint8Array(frame);
+                    sentFrames.push(copy);
+                    // When the transport sends DISABLE_FLOW_CONTROL on ch 7, echo VERSION and MAX_SEGMENTATION_PACKET on ch 0
+                    const segs = McspBle.decodeSegmentationFrames(copy);
+                    for (const seg of segs) {
+                      if (seg.channel === 0 && seg.payload[0] === 0x03 && seg.payload[1] === 7 && notifyListener) {
+                        const ackVer = McspBle.encodeSegmentationFrame(0, true, Uint8Array.from([0x01, 0x03]));
+                        const ackMax = McspBle.encodeSegmentationFrame(0, true, Uint8Array.from([0x04, 0x02, 0x00]));
+                        const both = new Uint8Array(ackVer.length + ackMax.length);
+                        both.set(ackVer, 0);
+                        both.set(ackMax, ackVer.length);
+                        notifyListener({ target: { value: new DataView(both.buffer) } });
+                      }
+                    }
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+      disconnect() {},
+    },
+  };
+
+  const bleTransport = new McspBle.Bes3BleMcspTransport(fakeGattDevice);
+  await bleTransport.open();
+  eq(sentFrames.length, 9, 'BLE MCSP open() sends 9 channel-0 control frames (VERSION, MAX_PACKET, 7x DISABLE_FLOW_CONTROL)');
+
+  // Simulate bike reading MobileApp.MOBILE_APP_STATIC_FEATURE_PROPERTIES (0x40aa) and writing STARTUP_STAGE = 9 (0x40a9)
+  const bikeReadProps = McspBle.encodeSegmentationFrame(1, true, Uint8Array.from([0x20, 0x00, 0x40, 0xaa, 0x03]));
+  const bikeWriteStage9 = McspBle.encodeSegmentationFrame(1, true, Uint8Array.from([0x20, 0x00, 0x40, 0xa9, 0x24, 0x08, 0x09]));
+  notifyListener({ target: { value: new DataView(bikeReadProps.buffer) } });
+  notifyListener({ target: { value: new DataView(bikeWriteStage9.buffer) } });
+  eq(bleTransport.startupStage, 9, 'MobileApp peer responder records STARTUP_STAGE = 9');
+  eq(await bleTransport.waitForBikeReady(100), true, 'waitForBikeReady resolves immediately when STARTUP_STAGE == 9');
+
+  // Outgoing frame rewrite: 0x0e10 -> 0x4180 without mutating caller's buffer
+  const usbReadFrame = Uint8Array.from([0x30, 0x05, 0x0e, 0x10, 0x18, 0x00, 0x01]);
+  await bleTransport.doMcspWrite(usbReadFrame);
+  eq(usbReadFrame[2], 0x0e, 'caller buffer is not mutated in place');
+  const lastOut = McspBle.decodeSegmentationFrames(sentFrames[sentFrames.length - 1])[0];
+  eq(lastOut.channel, 1, 'application frame sent on channel 1');
+  eq(lastOut.payload[0], 0x41, 'outgoing source high byte rewritten to 0x41');
+  eq(lastOut.payload[1], 0x80, 'outgoing source low byte rewritten to 0x80');
+
+  // Incoming response rewrite: 0x80 | 0x41, 0x80 -> 0x80 | 0x0e, 0x10 (preserving implicit-success MSB)
+  const bikeResp = McspBle.encodeSegmentationFrame(1, true, Uint8Array.from([0x18, 0x00, 0x80 | 0x41, 0x80, 0x11, 0x08, 0x01]));
+  notifyListener({ target: { value: new DataView(bikeResp.buffer) } });
+  const received = await bleTransport.readNextFrame(2, 0);
+  assert(received && received[0] === 0x30, 'incoming BLE response wrapped with 0x30 header');
+  eq(received[4], 0x8e, 'incoming destination high byte rewritten to 0x8e (0x80 success MSB preserved)');
+  eq(received[5], 0x10, 'incoming destination low byte rewritten to 0x10');
+  await bleTransport.close();
 });
 
 // The safety document presents the suite count as evidence. It must quote the

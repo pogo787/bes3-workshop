@@ -507,7 +507,9 @@
         return;
       }
       card(x, yy, cw, ch);
-      drawIcon(c.key, x + 4, yy + 4, C.ink);
+      // The component photo when one is available (embedded map, or the photo
+      // loaded with the header button); the vector icon otherwise.
+      if (!drawComponentPhoto(c, x + 3, yy + 3, 11, 10.5)) drawIcon(c.key, x + 4, yy + 4, C.ink);
       font(doc, 8.5, 'normal', C.ink); doc.text(c.type, x + 16, yy + 8);
       font(doc, 13, 'bold', C.ink); doc.text(doc.splitTextToSize(c.name || c.key, cw - 20)[0], x + 16, yy + 14.5);
       badge(x + 18.5, yy + 24, 'ok');
@@ -581,6 +583,36 @@
       else { doc.roundedRect(x + 1, y0, 8, 10.5, 0.8, 0.8, 'S'); doc.rect(x + 2.6, y0 + 1.8, 4.8, 6, 'S'); }
     }
 
+    // The component photo for a component: the embedded base64 map when the
+    // private tree ships it, otherwise the JPEG that was converted from the
+    // session's remote photo (loaded with the header button).
+    function componentPhoto(c) {
+      if (!c) return null;
+      const P = window.Bes3PartImages;
+      if (P && typeof P.getPdfImage === 'function') return P.getPdfImage(c.key, c.code);
+      const f = H.partImg && H.partImg(c.key, c.code);
+      const tbl = window.Bes3PartImagesPdf;
+      if (!f || !tbl) return null;
+      const name = f.split('/').pop();
+      return tbl[name] && Array.isArray(tbl[name + '#size']) ? { data: tbl[name], size: tbl[name + '#size'] } : null;
+    }
+
+    // Draws a component photo into a box; returns false when there is none or
+    // the image cannot be embedded (the caller then draws the vector icon).
+    function drawComponentPhoto(c, x, y0, maxW, maxH) {
+      const entry = componentPhoto(c);
+      if (!entry || !entry.data || !Array.isArray(entry.size)) return false;
+      const [iw, ih] = entry.size;
+      if (!iw || !ih) return false;
+      const sc = Math.min(maxW / iw, maxH / ih);
+      try {
+        doc.addImage(entry.data, 'JPEG', x, y0, iw * sc, ih * sc);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
     // ============================================================ page 4 – configuration
     newPage();
     y = h1('Configuration', 44);
@@ -638,7 +670,11 @@
     rows.forEach((m, i) => {
       const yy = y + 12.5 + i * 4.6;
       const u = m.udam;
-      font(doc, 8.6, 'bold', C.ink); doc.text(String(m.name), cx[0], yy);
+      // The mode colour, the same one the on-screen charts use, so a printed
+      // report can be matched with the dashboard.
+      const modeCol = hexToRgb(m.color);
+      fill(doc, modeCol); doc.roundedRect(cx[0], yy - 2.7, 2.7, 2.7, 0.6, 0.6, 'F');
+      font(doc, 8.6, 'bold', C.ink); doc.text(String(m.name), cx[0] + 4.4, yy);
       [u.maximumMotorTorque != null ? `${u.maximumMotorTorque} Nm` : '–', u.assistLevel != null ? `${u.assistLevel} %` : '–',
         u.maximumBikeSpeed != null ? `${NF0.format(u.maximumBikeSpeed / 100)} km/h` : '–', u.accelerationResponse != null ? `${u.accelerationResponse} %` : '–',
         u.maximumMotorPower != null ? `${u.maximumMotorPower} W` : '–'].forEach((v, k) => doc.text(v, cx[k + 1], yy, { align: 'right' }));
@@ -666,16 +702,7 @@
       font(doc, 8.6, 'normal', C.ink); doc.text(k, M + 1, y); doc.text(String(v || '–'), M + 64, y); y += 4.6;
     });
     y += 6;
-    const pdfImg = (c) => {
-      if (window.Bes3PartImages && typeof window.Bes3PartImages.getPdfImage === 'function') {
-        return window.Bes3PartImages.getPdfImage(c.key, c.code);
-      }
-      const f = H.partImg && H.partImg(c.key, c.code);
-      const tbl = window.Bes3PartImagesPdf;
-      if (!f || !tbl) return null;
-      const name = f.split('/').pop();
-      return tbl[name] && Array.isArray(tbl[name + '#size']) ? { data: tbl[name], size: tbl[name + '#size'] } : null;
-    };
+    const pdfImg = (c) => componentPhoto(c);
     d.comps.filter((c) => c.present && (c.sw || c.part || c.serial || c.code)).forEach((c) => {
       if (y > PAGE_H - 52) { newPage(); y = 46; }
       const img = pdfImg(c);
@@ -709,7 +736,9 @@
       font(doc, 8.6, 'normal', C.ink); doc.text('Display name', M + 1, y); doc.text('Application number', M + 64, y); y += 5;
       apps.forEach((m) => {
         if (y > PAGE_H - 26) { newPage(); y = 46; }
-        font(doc, 8.6, 'bold', C.ink); doc.text(String(m.name), M + 1, y); doc.text(String(m.configId), M + 64, y); y += 4.6;
+        const modeCol = hexToRgb(m.color);
+        fill(doc, modeCol); doc.roundedRect(M + 1, y - 2.7, 2.7, 2.7, 0.6, 0.6, 'F');
+        font(doc, 8.6, 'bold', C.ink); doc.text(String(m.name), M + 5.4, y); doc.text(String(m.configId), M + 64, y); y += 4.6;
       });
     }
 

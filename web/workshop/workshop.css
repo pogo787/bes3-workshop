@@ -115,6 +115,11 @@ a { color: var(--primary); }
 @keyframes pulse { 50% { opacity: .35; } }
 .icon-btn { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); cursor: pointer; }
 .icon-btn:hover { color: var(--ink); border-color: var(--line-strong); }
+/* Component-photo button: the state is visible in every tab. */
+.icon-btn[data-state="loading"] { color: var(--warn); border-color: var(--warn); }
+.icon-btn[data-state="loaded"] { color: var(--ok); border-color: var(--ok); }
+.icon-btn[data-state="failed"] { color: var(--bad); border-color: var(--bad); }
+.icon-btn[disabled] { opacity: .6; cursor: default; }
 .progress { height: 2px; background: transparent; }
 .progress__bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--primary), var(--beam)); transition: width .25s var(--ease); }
 

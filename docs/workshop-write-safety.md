@@ -448,7 +448,7 @@ node tools/check-workshop-light.mjs
 
 Status (executed): Node.js **v24.22.1**. `node --check` passed for
 `write-policy.js`, `engine.js`, `ui.js` and this runner; the runner reported
-**212 passed, 0 failed, 0 skipped** (the policy/source checks plus the engine
+**209 passed, 0 failed, 0 skipped** (the policy/source checks plus the engine
 checks against the simulated transport); `git diff --check` was clean. One of the
 source checks validates the System ID card's experimental/untested wording at
 source level; it is not browser execution. This establishes the policy and the

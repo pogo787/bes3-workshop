@@ -6,6 +6,59 @@ single source of truth; every commit that changes behaviour bumps that version
 and adds an entry here, newest first. The top entry below must match
 `POLICY.VERSION` (a source check enforces this).
 
+## 0.48.0 — 2026-11-07
+
+- **Assistance-mode colours in the PDF report.** Both the Assistance modes
+  parameter table (page 4) and the Assistance modes application list (page 5) in
+  the PDF report now render a colour swatch next to each mode name matching the
+  on-screen dashboard and ride-statistics charts.
+
+## 0.47.0 — 2026-10-31
+
+- **The report embeds the component photos loaded with the header button.** The
+  Components page and the software-versions list now draw the photo of every
+  component once the session's photos are loaded, instead of only the vector
+  icon. The photos are converted to embeddable JPEG data before the document is
+  built, so the preview and the download both contain them. Without the opt-in
+  the report keeps the vector icons.
+
+## 0.46.0 — 2026-10-30
+
+- **One component-photo control in the header.** The per-tab photo controls are
+  gone: a single icon button in the top bar loads the component photos once per
+  session (hover text explains the external request to `cdn.jsdelivr.net`, the
+  session-only scope and the vector-icon fallback). Its state (not loaded,
+  loading, loaded, failed) is shown on the icon and stays visible in every tab;
+  once loaded, the photos are used in the Overview component cards and in the
+  PDF report.
+
+## 0.45.0 — 2026-10-29
+
+- **Web Bluetooth support (`rweijnen/bosch-bes3-reader` transports).** Added and
+  wired both Web Bluetooth transports from `rweijnen/bosch-bes3-reader`:
+  - `web/transport-webble-mcsp.js` (`window.Bes3BleMcsp`) — full MCSP/MessageBus
+    over BLE (`00000010-eaa2-11e9-81b4-2a2ae2dbcce4`), including the channel-0
+    segmentation handshake, the `MobileApp` peer startup responder (`0x40aa`
+    `stagedStartup=true` and `0x40a9` `STARTUP_STAGE == 9`), and `0x0e10` ↔
+    `0x4180` source/destination address translation. Supports full component
+    readouts and verified staged writes through the existing engine gates.
+  - `web/transport-webble.js` (`window.Bes3LiveDataBle`) — Bosch's official,
+    read-only eBike Live Data Interface (`0000eb20-eaa2-11e9-81b4-2a2ae2dbcce4`),
+    with bounded varint/frame decoding and a live 13-field telemetry card on
+    Overview.
+
+## 0.44.0 — 2026-10-29
+
+- **Upfront ballast cleanup.** Removed the standalone Registry Browser tab
+  (`web/workshop/registry-browser.js`), the separate Battery health heuristic
+  card (`web/workshop/battery-health.js`, since the KPI grid and Battery &
+  system card already display SoH, cycles, lifetime energy and pack
+  temperatures), and the unreferenced root `icon.svg`. Moved the internal draft
+  proposal/decision documents (`csp-proposal.md`, `image-map-proposal.md`,
+  `proposal-general-config.md`, `decision-write-flow.md`) into `docs/internal/`.
+  The Workshop returns to the core four-tab layout (`Overview`, `Configure`,
+  `Diagnostic Report`, `Session Log`).
+
 ## 0.43.2 — 2026-10-25
 
 - **Service interval presets explain the replace behaviour.** A note next to the
