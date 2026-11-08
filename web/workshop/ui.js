@@ -26,8 +26,9 @@
   // single source of truth, mirrored by docs/CHANGELOG.md.
   const versionInfo = () => POLICY.VERSION || { version: '0.0.0', date: '' };
   const versionLabel = () => 'Workshop v' + versionInfo().version;
-  // Show the version in the static header and footer chrome, built here so no
-  // markup or CSS needs to change.
+  // The version is stamped directly in index.html, so a cached script bundle
+  // cannot silently show an old version in the header/footer. These elements are
+  // only created as a fallback when the markup does not carry them.
   function injectVersionLabels() {
     const txt = versionLabel();
     const actions = document.querySelector('.topbar__actions');
@@ -43,6 +44,38 @@
       s.id = 'verFoot'; s.textContent = ' · ' + txt;
       legal.appendChild(s);
     }
+  }
+
+  // Static hosting often sends no Cache-Control header for .js files, so a
+  // browser can keep an older script bundle while the HTML is fresh. Compare the
+  // loaded policy version with the markup stamp and, on the LAN deploy, with
+  // deploy-info.txt; report a mismatch instead of silently showing stale data.
+  function checkDeployedVersion() {
+    const loaded = versionInfo().version;
+    const report = (deployed) => {
+      if (!deployed || deployed === loaded || document.getElementById('verStale')) return;
+      const legal = document.querySelector('.foot__legal');
+      if (!legal) return;
+      const n = document.createElement('span');
+      n.id = 'verStale'; n.className = 'muted'; n.style.fontSize = 'var(--text-xs)';
+      n.textContent = ` · Cached scripts v${loaded}, deployed build v${deployed}. Reload with Ctrl+Shift+R.`;
+      legal.appendChild(n);
+      if (window.Bes3DebugLog && window.Bes3DebugLog.log) {
+        window.Bes3DebugLog.log('workshop', `stale asset cache: loaded v${loaded}, deployed v${deployed}`);
+      }
+    };
+    report(document.documentElement.getAttribute('data-version'));
+    // deploy-info.txt is written by the LAN deploy script. It is absent on
+    // GitHub Pages and file://; the failed request is ignored.
+    try {
+      fetch('deploy-info.txt?_=' + Date.now(), { cache: 'no-store' })
+        .then((r) => r.ok ? r.text() : '')
+        .then((t) => {
+          const m = /version:\s*([0-9][0-9.]*)/.exec(t);
+          if (m) report(m[1]);
+        })
+        .catch(() => {});
+    } catch (_) { /* ignore */ }
   }
 
   // ------------------------------------------------------------ data access
@@ -266,6 +299,17 @@
       MiniRemote: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="8" y="5" width="8" height="14" rx="2"/><path d="M12 9v2M11 10h2M11 15h2"/></svg>',
     },
   };
+  // One distinct line glyph per Configuration card, all drawn with the same
+  // stroke weight and the same colour class. This mirrors the monochrome vector
+  // glyphs in the PDF report: homogeneous colour, individual symbols.
+  ICON.card = {
+    light: ICON.light,
+    service: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M12 14v3l2 1"/></svg>',
+    ports: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v5M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-6 6 6 6 0 0 1-6-6V8z"/><path d="M12 17v4"/></svg>',
+    id: ICON.shield,
+    lab: ICON.wrench,
+    pending: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h4"/><path d="m14.5 16.5 1.5 1.5 3-3"/></svg>',
+  };
 
   function bikeSvg() {
     const G = window.Bes3BikeGeometry;
@@ -343,7 +387,7 @@
     $('view-start').hidden = hasData() || S.mode === 'reading' || S.mode === 'connecting';
     render();
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    // Opening the Configure tab asks once per session for the consent to write.
+    // Opening the Configuration tab asks once per session for the consent to write.
     if (t === 'write') maybeAskConsent();
   }
   const hasData = () => Object.keys(S.values).length > 0 && S.mode !== 'reading';
@@ -366,7 +410,7 @@
     }
     if (!W.isLive && hasData() && S.mode === 'file') {
       if (S.bleLive && S.bleLive.active) {
-        return `${unverifiedNote}<div class="notice conn-banner">${ICON.info}<div class="conn-banner__text"><strong>Live Data BLE telemetry active (${esc(S.bleLive.deviceName || 'Bosch eBike')}).</strong> Streaming Bosch's official read-only BLE Live Data Interface. For full component diagnostics or configuration writes, connect via USB or Bluetooth (MCSP).</div></div>`;
+        return `${unverifiedNote}<div class="notice conn-banner">${ICON.info}<div class="conn-banner__text"><strong>Live Data BLE telemetry active (${esc(S.bleLive.deviceName || 'Bosch eBike')}).</strong> Read-only. Use USB or MCSP for diagnostics and writes.</div></div>`;
       }
       return `${unverifiedNote}<div class="notice conn-banner">${ICON.info}<div class="conn-banner__text"><strong>Not connected.</strong> You are viewing a saved readout. Connect the eBike via USB or Bluetooth for live values and configuration.</div><button class="btn btn--primary btn--sm" data-act="reconnect">Connect</button></div>`;
     }
@@ -378,27 +422,40 @@
     const v = S.bleLive.values || {};
     const has = (k) => Object.prototype.hasOwnProperty.call(v, k) && v[k] !== null && v[k] !== undefined;
     const yn = (b) => (b ? 'yes' : 'no');
+    const missing = 'not available';
     const items = [
-      ['Speed', has('speedKmh') ? Number(v.speedKmh).toFixed(1) + ' km/h' : '–'],
-      ['Cadence', has('cadenceRpm') ? String(v.cadenceRpm) + ' rpm' : '–'],
-      ['Rider power', has('riderPowerW') ? String(v.riderPowerW) + ' W' : '–'],
-      ['Ambient brightness', has('ambientBrightnessLux') ? Number(v.ambientBrightnessLux).toFixed(1) + ' lux' : '–'],
-      ['Battery SoC', has('batterySocPercent') ? String(v.batterySocPercent) + ' %' : '–'],
-      ['Bike time (UTC)', has('timeUnixSeconds') ? new Date(Number(v.timeUnixSeconds) * 1000).toISOString() : '–'],
-      ['Odometer', has('odometerMeters') ? (Number(v.odometerMeters) / 1000).toFixed(1) + ' km' : '–'],
-      ['Bike light', has('bikeLight') ? String(v.bikeLight) : '–'],
-      ['System locked', has('systemLocked') ? yn(v.systemLocked) : '–'],
-      ['Charger connected', has('chargerConnected') ? yn(v.chargerConnected) : '–'],
-      ['Light reserve', has('lightReserveState') ? yn(v.lightReserveState) : '–'],
-      ['Diagnosis tool connected', has('diagnosisProgramActive') ? yn(v.diagnosisProgramActive) : '–'],
-      ['Bike not driving', has('bikeNotDriving') ? yn(v.bikeNotDriving) : '–'],
+      ['Speed', has('speedKmh') ? Number(v.speedKmh).toFixed(1) + ' km/h' : missing],
+      ['Cadence', has('cadenceRpm') ? String(v.cadenceRpm) + ' rpm' : missing],
+      ['Rider power', has('riderPowerW') ? String(v.riderPowerW) + ' W' : missing],
+      ['Ambient brightness', has('ambientBrightnessLux') ? Number(v.ambientBrightnessLux).toFixed(1) + ' lux' : missing],
+      ['Battery SoC', has('batterySocPercent') ? String(v.batterySocPercent) + ' %' : missing],
+      ['Bike time (UTC)', has('timeUnixSeconds') ? new Date(Number(v.timeUnixSeconds) * 1000).toISOString() : missing],
+      ['Odometer', has('odometerMeters') ? (Number(v.odometerMeters) / 1000).toFixed(1) + ' km' : missing],
+      ['Bike light', has('bikeLight') ? String(v.bikeLight) : missing],
+      ['System locked', has('systemLocked') ? yn(v.systemLocked) : missing],
+      ['Charger connected', has('chargerConnected') ? yn(v.chargerConnected) : missing],
+      ['Light reserve', has('lightReserveState') ? yn(v.lightReserveState) : missing],
+      ['Diagnosis tool connected', has('diagnosisProgramActive') ? yn(v.diagnosisProgramActive) : missing],
+      ['Bike not driving', has('bikeNotDriving') ? yn(v.bikeNotDriving) : missing],
     ];
     const dl = items.map(([label, valStr]) => '<dt>' + esc(label) + '</dt><dd class="mono">' + esc(valStr) + '</dd>').join('');
-    const badge = S.bleLive.active
-      ? '<span class="chip chip--ok">Live BLE stream</span>'
-      : '<span class="chip chip--warn">Disconnected</span>';
+    const any = Object.keys(v).length > 0;
+    const active = !!S.bleLive.active;
+    let badge;
+    let status;
+    if (!active) {
+      badge = '<span class="chip chip--warn">Stale</span>';
+      status = S.bleLive.lastAt ? `Disconnected. Last value: ${fmtDateTime(S.bleLive.lastAt)}.` : 'Disconnected. No value received.';
+    } else if (!any) {
+      badge = '<span class="chip chip--warn">Waiting for first value</span>';
+      status = 'Connected. No telemetry frame received yet.';
+    } else {
+      badge = '<span class="chip chip--ok">Live</span>';
+      status = S.bleLive.lastAt ? `Last value: ${fmtDateTime(S.bleLive.lastAt)}.` : '';
+    }
     return '<div class="section" id="bleLiveSection"><div class="section__head"><div><h2 class="section__title">Bluetooth Live Data telemetry</h2>'
-      + '<p class="section__sub">Official Bosch eBike Live Data Interface (0000eb20-eaa2-11e9-81b4-2a2ae2dbcce4) · read-only real-time notifications</p></div>'
+      + '<p class="section__sub">Official Bosch eBike Live Data Interface (0000eb20-eaa2-11e9-81b4-2a2ae2dbcce4) · read-only</p>'
+      + (status ? `<p class="section__sub">${esc(status)}</p>` : '') + '</div>'
       + badge + '</div><div class="card"><dl class="kv">' + dl + '</dl></div></div>';
   }
 
@@ -419,8 +476,9 @@
     $('btnReread').hidden = !(W.isLive && hasData() && !busy && !writing);
     $('btnReread').disabled = busy || writing;
     const tr = $('btnTopReconnect'); if (tr) tr.hidden = W.isLive || !hasData() || busy;
-    $('btnDisconnect').hidden = !(W.isLive || S.mode === 'file');
-    $('btnDisconnect').textContent = W.isLive ? 'Disconnect' : 'Close';
+    const liveData = !!(S.bleLive && S.bleLive.active);
+    $('btnDisconnect').hidden = !(W.isLive || liveData || S.mode === 'file');
+    $('btnDisconnect').textContent = (W.isLive || liveData) ? 'Disconnect' : 'Close';
     $('progress').hidden = !busy;
     updatePhotoButton();
     const showStart = !hasData() && !busy;
@@ -432,7 +490,7 @@
   function renderReading() {
     const el = $('view-read');
     el.innerHTML = `<div class="reading"><h2>${S.demo ? 'Reading demo eBike' : 'Reading your eBike'}</h2>
-      <p id="readingLabel" role="status">System data, assistance modes and fault memory · keep the cable connected</p></div>
+      <p id="readingLabel" role="status">Reading system data, assistance modes and fault memory</p></div>
       <div class="skeleton"><div class="sk" style="height:200px"></div>
       <div class="grid grid--kpi">${'<div class="sk" style="height:110px"></div>'.repeat(6)}</div>
       <div class="sk" style="height:260px"></div></div>`;
@@ -481,6 +539,24 @@
     return chip(short, 'chip--warn', d.evidenceNote, 'max-width:100%;white-space:normal;overflow-wrap:anywhere');
   }
   const experimentalChip = () => chip('Experimental', 'chip--warn');
+  // Exactly one warning chip per Configuration card, placed in its header. The
+  // label comes from the evidence of that card's operations, so cards with
+  // different levels of testing and validity stay individual. Control rows and
+  // footers carry no evidence chips. The full notes remain in the tooltip.
+  const CARD_EVIDENCE_OP = Object.freeze({
+    light: ['LIGHT_SWITCH', 'LIGHT_AVAILABLE', 'LIGHT_CONFIG', 'LIGHT_POWER'],
+    service: ['SERVICE_DUE'],
+    ports: ['GENERIC_WRITE'],
+    id: ['BIKE_ID'],
+    lab: ['GENERIC_WRITE'],
+  });
+  function cardChip(key) {
+    const info = (CARD_EVIDENCE_OP[key] || []).map((id) => POLICY.describeOp(id)).filter(Boolean);
+    const labels = Array.from(new Set(info.map((d) => EVIDENCE_SHORT[d.evidence] || d.evidenceLabel)));
+    const label = labels.length > 1 ? 'Mixed evidence' : (labels[0] || 'Untested');
+    const notes = Array.from(new Set(info.map((d) => d.evidenceNote).filter(Boolean))).join(' · ');
+    return chip('Experimental · ' + label, 'chip--warn', notes, 'max-width:100%;white-space:normal;overflow-wrap:anywhere');
+  }
 
   function issueCard(i) {
     const sevCls = i.severity === 'CRITICAL_ERROR' || i.severity === 'ERROR' ? 'chip--bad' : i.severity === 'WARNING' ? 'chip--warn' : '';
@@ -495,7 +571,7 @@
       ${hasText ? `<h3 class="issue__title">${esc(i.title || 'Error ' + i.code)}</h3>
         ${i.description ? `<p class="issue__p">${esc(i.description)}</p>` : ''}
         ${i.measures ? `<p class="issue__p"><strong>What to do:</strong> ${esc(i.measures).replace(/\n/g, '<br>')}</p>` : ''}`
-      : `<p class="issue__p muted">No description is bundled for this code. The Bosch Help Center page for the code has the details, or you can load your own error catalog.</p>`}
+      : `<p class="issue__p muted">No bundled description. See the Bosch Help Center or load an error catalog.</p>`}
       <div class="issue__foot">${i.helpUrl ? `<a href="${esc(i.helpUrl)}" target="_blank" rel="noopener">Error ${esc(i.code)} in the Bosch eBike Help Center</a>` : ''}${i.source ? `<span class="muted">Source: ${esc(i.source)}</span>` : ''}</div>
     </article>`;
   }
@@ -517,7 +593,7 @@
   // The read-only Mini Remote probe: read requests only, no writes.
   function remoteProbeBlock() {
     return `<div style="margin-top:8px"><button class="btn btn--ghost btn--sm" data-act="probeRemote">Probe remote registers</button>
-      <p class="field__hint" style="margin:4px 0 0">Sends read requests only — one per register, no retries, nothing is written. The result may stay empty: the remote pairs over Bluetooth and does not have to appear in the wired registers.</p>
+      <p class="field__hint" style="margin:4px 0 0">Read-only: one request per register, no retries, no writes. Bluetooth-paired remotes may not appear in wired registers.</p>
       ${remoteProbeTable()}</div>`;
   }
 
@@ -689,7 +765,7 @@
           ${statsNote}
           ${deactivated.length ? `<div class="stat"><div class="stat__head"><span class="stat__title">Deactivated modes</span><span class="stat__total">${escNum(deactivated.length)}</span></div>
             <div class="legend">${deactivated.map((m) => `<span><i style="background:${escColor(m.color)}"></i>${esc(m.name)} <b>no statistics</b></span>`).join('')}</div>
-            <p class="field__hint">These mode slots exist on the bike, but it reports no configuration id for them, so their statistics cannot be read over USB (every statistics call is keyed by that id). They are listed, not guessed.</p></div>` : ''}
+            <p class="field__hint">No configuration id reported for these slots; their statistics cannot be read. Listed, not guessed.</p></div>` : ''}
         </div></div>` : ''}
 
       <div class="section grid grid--2">
@@ -746,7 +822,22 @@
   }
 
   // ------------------------------------------------------------ WRITE view
-  const draft = { light: null, service: { option: 'year', date: '', km: '' }, advanced: { target: '', payload: '', search: '', components: null, rawOpen: false, cursor: -1 } };
+  // Accessory power-port registers. Both are writable in the address registry
+  // and high-impact in the write policy, so each staged change needs the typed
+  // register-name confirmation. Their payload semantics are not independently
+  // verified; the card is explicitly experimental and untested.
+  const PORT_TARGETS = [
+    { key: 'LOW', component: 'DriveUnit', name: 'LOW_POWER_PORT_ACTIVE', label: 'Low Power Port' },
+    { key: 'HIGH', component: 'DriveUnit', name: 'HIGH_POWER_PORT_ACTIVE', label: 'High Power Port' },
+  ].map((t) => ({ ...t, address: W.util.addrOf(t.component, t.name) }));
+  // An unverified assumption, shown as-is in the staged payload.
+  const PORT_PAYLOAD = { enable: '08 01', disable: '08 00' };
+  function portAddressLabel(t) { return t.address == null ? 'unknown' : '0x' + t.address.toString(16); }
+  // Every Configuration card is a dropdown, closed by default. The open state is
+  // kept here so a control that re-renders the view does not collapse its card.
+  const CARD_KEYS = ['light', 'service', 'ports', 'id', 'lab'];
+  const CARD_IDS = { lightCard: 'light', svcCard: 'service', portCard: 'ports', idCard: 'id', advCard: 'lab' };
+  const draft = { light: null, service: { option: 'year', date: '', km: '' }, ports: { LOW: 'unchanged', HIGH: 'unchanged' }, cards: { light: false, service: false, ports: false, id: false, lab: false }, advanced: { target: '', payload: '', search: '', components: null, rawOpen: false, cursor: -1, onlyRead: false } };
   // Staged changes are UI state only. They are never sent until Apply, and a
   // session change clears them before the new session can be written.
   const pending = [];
@@ -761,6 +852,15 @@
     draft.advanced.search = '';
     draft.advanced.components = null;
     draft.advanced.cursor = -1;
+    draft.advanced.onlyRead = false;
+  }
+  // A port choice and the open/closed state of every card must not survive a
+  // session change.
+  function resetPortDraft() {
+    for (const t of PORT_TARGETS) draft.ports[t.key] = 'unchanged';
+  }
+  function resetCardState() {
+    for (const k of CARD_KEYS) draft.cards[k] = false;
   }
   function clearPending() {
     pending.length = 0;
@@ -773,6 +873,7 @@
   function pendingWarning(step, tier) {
     if (step.op === 'BIKE_ID') return 'The System ID write is experimental and untested. A matching read-back does not prove that an ID conflict is resolved.';
     if (step.op === 'SERVICE_DUE' && /^Clear/i.test(step.label)) return 'Clearing the service interval means no service reminder will appear. Regular maintenance is still required.';
+    if (step.op === 'GENERIC_WRITE' && step.portLabel) return 'Power port: experimental and untested. The enable/disable encoding and the electrical effect are unverified. Type the full register name once per Apply batch; nothing is retried and nothing is rolled back.';
     if (step.op === 'GENERIC_WRITE' && tier === 'registry-readonly') return 'Read-only in registry. Type the full register name once per Apply batch. The bike will usually refuse this write.';
     if (step.op === 'GENERIC_WRITE' && tier === 'high-impact') return 'High-impact register. Type the full register name once per Apply batch. Nothing is retried and nothing is rolled back.';
     if (step.op === 'GENERIC_WRITE' && step.unreadable) return 'Write-only register. It cannot be read back, so the result will be unverified. Nothing is retried and nothing is rolled back.';
@@ -805,11 +906,11 @@
       const i = pending.findIndex((p) => p.key === item.key);
       if (i === -1) pending.push(item); else pending[i] = item;
     }
-    // A light-card plan replaces the card's previous steps as one unit. Other
+    // A card plan replaces that card's previous steps as one unit. Other
     // sources (the Write Lab in particular) add one row per explicit stage.
-    if (source === 'light') {
+    if (source === 'light' || source === 'ports') {
       for (let i = pending.length - 1; i >= 0; i--) {
-        if (pending[i].source === 'light' && !keys.has(pending[i].key)) pending.splice(i, 1);
+        if (pending[i].source === source && !keys.has(pending[i].key)) pending.splice(i, 1);
       }
     }
     pendingLampConfirmed = false;
@@ -855,9 +956,9 @@
     const disabled = !W.canMutate || (lamp && !pendingLampConfirmed);
     return `<article class="card wcard wcard--full" id="pendingChanges" aria-labelledby="pendingTitle">
       <header class="wcard__head">
-        <span class="wcard__icon wcard__icon--primary">${ICON.check}</span>
+        <span class="wcard__icon wcard__icon--card">${ICON.card.pending}</span>
         <div><h2 class="wcard__title" id="pendingTitle">Pending changes (${escNum(pending.length)})</h2>
-          <p class="wcard__sub">Nothing here has been sent. Review every row, then Apply the whole batch. Each write is re-read; the batch stops at the first unverified step and is never retried or rolled back.</p></div>
+          <p class="wcard__sub">Nothing sent. Each write re-read; batch stops at first unverified step. No retry, no rollback.</p></div>
       </header>
       <div class="wcard__body">
         <div class="table-wrap"><table class="t">
@@ -945,11 +1046,13 @@
   function writeLabFiltered() {
     const active = writeLabActiveComponents();
     const q = String(draft.advanced.search || '').trim().toLowerCase();
-    const key = Array.from(active).sort().join(',') + '|' + q;
+    const onlyRead = !!draft.advanced.onlyRead;
+    const key = Array.from(active).sort().join(',') + '|' + q + '|' + (onlyRead ? 'read' : 'all');
     if (writeLabFilteredCache && writeLabFilteredCache.key === key) return writeLabFilteredCache.list;
     const list = genericTargets()
       .filter((e) => active.has(e.component))
       .filter((e) => !q || `${e.label} ${e.name} ${e.component} 0x${e.address.toString(16)}`.toLowerCase().indexOf(q) !== -1)
+      .filter((e) => !onlyRead || !!(S.values[genericTargetKey(e)] && S.values[genericTargetKey(e)].status === 'ok'))
       .sort((a, b) => String(a.label).localeCompare(String(b.label)));
     writeLabFilteredCache = { key, list };
     return list;
@@ -960,7 +1063,8 @@
     if (t.tier === 'high-impact') tags.push('high impact');
     if (t.tier === 'registry-readonly') tags.push('read-only');
     if (!entryReadable(e)) tags.push('write-only');
-    return `${e.label} — ${e.component}.${e.name} (0x${e.address.toString(16)})${tags.length ? ' — ' + tags.join(', ') : ''}`;
+    const kind = e.kind || 'unknown';
+    return `${e.label} — ${e.component}.${e.name} (0x${e.address.toString(16)}) · ${kind}${tags.length ? ' — ' + tags.join(', ') : ''}`;
   }
   // The visible result list is the picker. It is updated in place while typing
   // so the search field keeps focus; selecting an item is a deliberate click or
@@ -1038,7 +1142,151 @@
     if (btn) { btn.disabled = !(W.isLive || S.demo); btn.title = reasons.join('; '); }
     const why = $('wlReasons');
     if (why) why.textContent = reasons.length ? 'Next: ' + reasons.join(' → ') : 'All conditions met.';
+    updateWriteLabPreview();
   }
+  // A read-only protobuf breakdown of the typed payload. It never gates the
+  // write: the hex validation in POLICY.validateHexPayload stays the only
+  // payload check, and an unparseable body is shown as such.
+  function annotatePayload(bytes) {
+    if (!bytes || !bytes.length) {
+      return 'Empty payload: for a proto3 bool or optional field this is false/off/cleared.';
+    }
+    const out = [];
+    let i = 0;
+    const readVarint = () => {
+      let value = 0;
+      let shift = 0;
+      let b;
+      do {
+        if (i >= bytes.length) return null;
+        b = bytes[i++];
+        value += (b & 0x7f) * Math.pow(2, shift);
+        shift += 7;
+        if (shift > 56) return null;
+      } while (b & 0x80);
+      return value;
+    };
+    while (i < bytes.length) {
+      const tag = bytes[i++];
+      const field = tag >> 3;
+      const wire = tag & 0x07;
+      if (field === 0) return 'not parseable as protobuf (field 0)';
+      if (wire === 0) {
+        const value = readVarint();
+        if (value === null) return 'not parseable as protobuf (truncated varint)';
+        out.push(`field ${field} · varint · ${value}`);
+      } else if (wire === 2) {
+        const len = readVarint();
+        if (len === null) return 'not parseable as protobuf (truncated length)';
+        if (i + len > bytes.length) return 'not parseable as protobuf (truncated value)';
+        const chunk = bytes.slice(i, i + len);
+        i += len;
+        const printable = chunk.length > 0 && chunk.every((c) => c >= 0x20 && c <= 0x7e);
+        out.push(`field ${field} · length ${len}` + (printable ? ` · "${String.fromCharCode.apply(null, chunk)}"` : ` · ${W.util.toHex(chunk)}`));
+      } else if (wire === 5) {
+        if (i + 4 > bytes.length) return 'not parseable as protobuf (truncated fixed32)';
+        out.push(`field ${field} · fixed32 · ${W.util.toHex(bytes.slice(i, i + 4))}`);
+        i += 4;
+      } else if (wire === 1) {
+        if (i + 8 > bytes.length) return 'not parseable as protobuf (truncated fixed64)';
+        out.push(`field ${field} · fixed64 · ${W.util.toHex(bytes.slice(i, i + 8))}`);
+        i += 8;
+      } else {
+        return `not parseable as protobuf (unsupported wire type ${wire})`;
+      }
+    }
+    return out.join(' · ');
+  }
+
+  // The exact bytes the engine will send, produced by the same builder the USB
+  // writer uses. Sequence 0 is a placeholder; the real sequence is assigned at
+  // Apply time.
+  function writeLabFrameInfo(entry, hex) {
+    if (!entry) return null;
+    const v = POLICY.validateHexPayload(hex);
+    if (!v.ok) return null;
+    let frame;
+    try {
+      frame = W.util.previewWriteFrame(entry.address, v.bytes);
+    } catch (_) {
+      return null;
+    }
+    return {
+      payloadBytes: v.bytes.length,
+      bodyBytes: frame.length - 2,
+      frameBytes: frame.length,
+      hex: W.util.toHex(frame),
+    };
+  }
+
+  function updateWriteLabPreview() {
+    const entry = writeLabEntry();
+    const payload = draft.advanced.payload;
+    const v = POLICY.validateHexPayload(payload);
+    const count = $('wlPayloadCount');
+    if (count) count.textContent = v.ok ? `${v.bytes.length} / 64 bytes` : (payload.trim() ? 'invalid payload' : '0 / 64 bytes');
+    const annotate = $('wlAnnotate');
+    if (annotate) {
+      annotate.textContent = v.ok
+        ? annotatePayload(v.bytes)
+        : (payload.trim() ? (v.error || 'invalid payload') : annotatePayload([]));
+    }
+    const info = writeLabFrameInfo(entry, payload);
+    const target = $('wlFrameTarget');
+    if (target) target.textContent = entry ? `${entry.component}.${entry.name} · 0x${entry.address.toString(16)}` : '–';
+    const pl = $('wlFramePayloadLen');
+    if (pl) pl.textContent = info ? `${info.payloadBytes} byte${info.payloadBytes === 1 ? '' : 's'}` : '–';
+    const bl = $('wlFrameBodyLen');
+    if (bl) {
+      bl.textContent = info
+        ? `${info.bodyBytes} byte${info.bodyBytes === 1 ? '' : 's'}${info.bodyBytes > 255 ? ' (over the 255-byte single-octet limit)' : ''}`
+        : '–';
+    }
+    const hex = $('wlFrameHex');
+    if (hex) hex.textContent = info ? info.hex : '–';
+  }
+
+  async function copyToClipboard(text, label) {
+    if (!text || text === '–') { toast('Nothing to copy yet'); return; }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        toast(label + ' copied');
+        return;
+      }
+    } catch (_) { /* fall through */ }
+    toast('Copy is not available in this browser');
+  }
+
+  // Prefill from the last successful read so the operator edits a known value
+  // instead of retyping it. This sends no request.
+  function useCurrentWriteLabValue() {
+    const entry = writeLabEntry();
+    if (!entry) return;
+    const cur = S.values[genericTargetKey(entry)];
+    if (!cur || cur.status !== 'ok') return;
+    let hex = typeof cur.hex === 'string' ? cur.hex : '';
+    if (!hex && entry.kind === 'bool') hex = cur.value ? '08 01' : '08 00';
+    if (!hex && (entry.kind === 'uint' || entry.kind === 'normFactor') && typeof cur.value === 'number') {
+      const raw = entry.kind === 'normFactor' ? Math.round(cur.value * (entry.factor || 1)) : Math.round(cur.value);
+      hex = W.util.toHex(W.util.encodeEnumArg(raw));
+    }
+    if (!hex && entry.kind === 'string' && typeof cur.value === 'string') hex = W.util.toHex(W.util.encodeStringArg(cur.value));
+    if (!hex && entry.kind === 'enum' && (typeof cur.value === 'number' || typeof cur.value === 'string')) {
+      const n = Number(cur.value);
+      if (Number.isFinite(n)) hex = W.util.toHex(W.util.encodeEnumArg(n));
+    }
+    if (!hex) { toast('The current value cannot be re-encoded losslessly'); return; }
+    draft.advanced.payload = hex;
+    const raw = $('wlPayload'); if (raw) raw.value = hex;
+    const b = $('wlBool'); if (b && typeof cur.value === 'boolean') b.checked = cur.value;
+    const n = $('wlNumber'); if (n && typeof cur.value === 'number') n.value = String(cur.value);
+    const t = $('wlText'); if (t && typeof cur.value === 'string') t.value = cur.value;
+    const e = $('wlEnum'); if (e && (typeof cur.value === 'number' || typeof cur.value === 'string')) e.value = String(cur.value);
+    updateWriteLabAvailability();
+    toast('Current value loaded into the payload — edit it before staging');
+  }
+
   function writeLabFriendlyInput(entry) {
     if (!entry) return '';
     const kind = entry.kind;
@@ -1054,8 +1302,13 @@
         <input class="input" id="wlText" type="text" autocomplete="off" placeholder="e.g. en"></label>`;
     }
     if (kind === 'enum') {
-      return `<label class="form" style="gap:6px"><span class="field__label" style="margin:0">Value (known enum)</span>
-        <select class="select" id="wlEnum"><option value="">— choose a value —</option>${Object.entries(entry.enumTable || {}).filter(([k]) => k !== '-1').map(([k, v]) => `<option value="${esc(k)}">${esc(v.label || v.name)} (${esc(k)})</option>`).join('')}</select></label>`;
+      const options = Object.entries(entry.enumTable || {}).filter(([k]) => k !== '-1').map(([k, v]) => {
+        let payload = '';
+        try { payload = W.util.toHex(W.util.encodeEnumArg(Number(k))); } catch (_) { payload = ''; }
+        return `<option value="${esc(k)}">${esc(v.label || v.name)} (${esc(k)})${payload ? ' — ' + esc(payload) : ''}</option>`;
+      }).join('');
+      return `<label class="form" style="gap:6px"><span class="field__label" style="margin:0">Value (known enum, payload shown)</span>
+        <select class="select" id="wlEnum"><option value="">— choose a value —</option>${options}</select></label>`;
     }
     if (kind === 'unixTimestamp') {
       return `<label class="form" style="gap:6px"><span class="field__label" style="margin:0">Value (date and time)</span>
@@ -1124,7 +1377,7 @@
   function requireAuthorized() {
     if (W.canMutate) return true;
     const reason = (W.isLive || S.demo)
-      ? 'Experimental writes are not enabled for this session. Open the Configure tab and enable them for this session.'
+      ? 'Experimental writes are not enabled for this session. Open the Configuration tab and enable them for this session.'
       : 'There is no live connection. Connect the eBike or start the demo before making changes.';
     modal({ title: 'Writes are disabled', body: `<p>${esc(reason)}</p>`, actions: [{ label: 'OK', value: true, cls: 'btn--primary' }] });
     return false;
@@ -1180,6 +1433,8 @@
     const duIdValid = !!d.duId && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(d.duId);
     const dr = draft.light;
     const powerEditable = canEdit && d.light.powerW !== null;
+    // The direct light-switch action is disabled while any write/batch runs.
+    const lightActionBusy = !!W.busy || S.mode === 'reading' || S.mode === 'connecting';
     const planRes = lightPlanResult();
     const steps = planRes.steps;
     const demoNote = S.demo ? `<div class="section" style="display:grid;gap:12px">${demoNoticeHtml()}</div>` : '';
@@ -1189,11 +1444,34 @@
     const so = draft.service.option;
     const nextYear = (() => { const t = new Date(); t.setFullYear(t.getFullYear() + 1); return t.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); })();
 
+    // Power-port card: build the rows and the gate text once, outside the
+    // innerHTML template. Unchanged is the default and never produces a step.
+    const portRows = PORT_TARGETS.map((t) => {
+      const value = draft.ports[t.key];
+      return `<div class="switch-row">
+        <div style="flex:1 1 auto;min-width:0">
+          <div class="switch-row__t">${esc(t.label)} <span class="mono muted">${esc(portAddressLabel(t))}</span></div>
+          <div class="switch-row__d">${esc(t.component)}.${esc(t.name)} · currently ${esc(portCurrent(t))}</div>
+        </div>
+        <select class="select" id="port_${esc(t.key)}" data-port="${esc(t.key)}" style="max-width:190px" ${canEdit ? '' : 'disabled'} aria-label="${esc(t.label)} state">
+          <option value="unchanged" ${value === 'unchanged' ? 'selected' : ''}>Unchanged — no write</option>
+          <option value="enable" ${value === 'enable' ? 'selected' : ''}>Enable (08 01)</option>
+          <option value="disable" ${value === 'disable' ? 'selected' : ''}>Disable (08 00)</option>
+        </select>
+      </div>`;
+    }).join('');
+    const portWhy = portReasons();
+    const portChanged = portChanges().length > 0;
+    const portReasonsText = portWhy.length ? 'Next: ' + esc(portWhy.join(' → '))
+      : portChanged ? 'All conditions met.' : 'Nothing to write — the ports already match your selection.';
+    const portCanStage = canEdit && !portWhy.length && portChanged;
+    const portCanRead = W.isLive || S.demo;
+
     const expOn = W.experimentalEnabled;
     const sessionOpen = live || S.demo;
     const authNotice = sessionOpen ? (expOn
-      ? `<div class="notice notice--ok">${ICON.check}<div><strong>Experimental writes enabled for this session.</strong> Staged changes are shown for review before anything is sent; each write is re-read afterwards when the register can be read back. The authorization clears on disconnect, connection loss, or when a saved readout is opened.</div></div>`
-      : `<div class="notice notice--warn" role="alert">${ICON.warn}<div><strong>Experimental writes are disabled.</strong> The Configure controls stay read-only until you enable them for this session. <button class="btn btn--primary btn--sm" data-act="expConsent">Enable experimental writes</button></div></div>`) : '';
+      ? `<div class="notice notice--ok">${ICON.check}<div><strong>Experimental writes enabled for this session.</strong></div></div>`
+      : `<div class="notice notice--warn" role="alert">${ICON.warn}<div><strong>Experimental writes are disabled.</strong> <button class="btn btn--primary btn--sm" data-act="expConsent">Enable experimental writes</button></div></div>`) : '';
 
     const filtered = writeLabFiltered();
     let advEntry = writeLabEntry();
@@ -1214,12 +1492,13 @@
     const compChips = writeLabComponentList().map(([c, label]) => `<button class="preset" data-wlcomp="${esc(c)}" aria-pressed="${activeComponents.has(c)}" style="${activeComponents.has(c) ? '' : 'opacity:.5'}">${esc(label)}</button>`).join('');
     const resultsHtml = writeLabResultsHtml(filtered, draft.advanced.target, draft.advanced.cursor);
     const friendly = writeLabFriendlyInput(advEntry);
-    const writeLabCard = `<article class="card wcard wcard--full" aria-labelledby="advTitle">
-      <header class="wcard__head">
-        <span class="wcard__icon wcard__icon--primary">${ICON.wrench}</span>
-        <div><h2 class="wcard__title" id="advTitle">Write Lab ${chip('Experimental · Untested', 'chip--warn')}</h2>
-          <p class="wcard__sub">Stage one registry register at a time. Pick a component and a register, enter a value and press Write. The target always comes from the address registry, never from a typed address. Staged changes are applied as one visible batch; each write is re-read when the register is readable, never retried and never rolled back. A matching read-back is not proof that a change is safe or persistent.</p></div>
-      </header>
+    const writeLabCard = `<details class="card wcard wcard--full wcard--collapse" id="advCard" ${draft.cards.lab ? 'open' : ''}>
+      <summary class="wcard__head" aria-labelledby="advTitle">
+        <span class="wcard__icon wcard__icon--card">${ICON.card.lab}</span>
+        <div style="flex:1 1 auto;min-width:0"><h2 class="wcard__title" id="advTitle">Write Lab ${cardChip('lab')}</h2>
+          <p class="wcard__sub">One register at a time. The target always comes from the address registry, never from a typed address. One batch; each write re-read. No retry, no rollback.</p></div>
+        <span class="card-chevron" aria-hidden="true"></span>
+      </summary>
       <div class="wcard__body">
         <div style="display:grid;gap:12px">
           <div>
@@ -1228,10 +1507,11 @@
           </div>
           <label class="form" style="gap:6px"><span class="field__label" style="margin:0">Search a field by name</span>
             <input class="input" id="wlSearch" type="search" role="combobox" autocomplete="off" placeholder="Search a field by name…" value="${esc(draft.advanced.search)}" aria-controls="wlResults" aria-autocomplete="list" aria-expanded="true" aria-haspopup="listbox"${draft.advanced.cursor >= 0 ? ` aria-activedescendant="wlOpt${draft.advanced.cursor}"` : ''}></label>
+          <label class="check"><input type="checkbox" id="wlOnlyRead" ${draft.advanced.onlyRead ? 'checked' : ''}> Only registers already read in this session</label>
           <div class="form" style="gap:6px">
             <div class="field__label" style="margin:0">Register</div>
             <div id="wlResults" role="listbox" aria-label="Matching registers" style="display:grid;gap:4px;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:var(--r);padding:4px">${resultsHtml}</div>
-            <span class="field__hint">Use the arrow keys and Enter, or click a register. ${filtered.length} match${filtered.length === 1 ? '' : 'es'}.</span>
+            <span class="field__hint">Arrow keys and Enter, or click. ${filtered.length} match${filtered.length === 1 ? '' : 'es'}.</span>
           </div>
           <div class="status-row" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
             <div class="status-cell" style="min-width:0"><div class="status-cell__k">Selected register</div><div class="status-cell__v mono" style="overflow-wrap:anywhere">${advEntry ? esc(advEntry.component + '.' + advEntry.name) : '–'}</div></div>
@@ -1239,11 +1519,38 @@
             <div class="status-cell" style="min-width:0"><div class="status-cell__k">Registry kind</div><div class="status-cell__v mono">${esc(advEntry ? (advEntry.kind || 'unknown') : '–')}</div></div>
           </div>
           ${friendly}
+          ${advEntry && entryReadable(advEntry) ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn btn--ghost btn--sm" id="wlUseCurrent" ${advCur && advCur.status === 'ok' ? '' : 'disabled'}>Use current value</button>
+            <span class="field__hint">${advCur && advCur.status === 'ok' ? 'Prefills from the last successful read.' : 'Read the register first.'}</span>
+          </div>` : ''}
           <details id="wlRawDetails" ${draft.advanced.rawOpen ? 'open' : ''}>
             <summary class="field__label" style="cursor:pointer;display:list-item">Raw payload (hex, max 64 bytes)</summary>
             <label class="form" style="gap:6px;margin-top:8px"><span class="field__label" style="margin:0">Raw payload</span>
               <input class="input mono" id="wlPayload" placeholder="e.g. 08 01" autocomplete="off" value="${esc(draft.advanced.payload)}" ${canEdit ? '' : 'disabled'}></label>
-            <p class="field__hint">Choosing a value fills the raw payload; the raw payload is what is written and, when the register is readable, re-read.</p>
+            <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+              <span class="field__hint" id="wlPayloadCount">0 / 64 bytes</span>
+              <span class="field__hint">max 64 bytes</span>
+            </div>
+            <p class="field__hint" id="wlAnnotate" style="overflow-wrap:anywhere"></p>
+            <p class="field__hint">The raw payload is written and, when readable, re-read.</p>
+          </details>
+          <details id="wlFrameDetails">
+            <summary class="field__label" style="cursor:pointer;display:list-item">Frame that will be sent</summary>
+            <div class="status-row" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:8px">
+              <div class="status-cell" style="min-width:0"><div class="status-cell__k">Target</div><div class="status-cell__v mono" id="wlFrameTarget" style="overflow-wrap:anywhere">–</div></div>
+              <div class="status-cell" style="min-width:0"><div class="status-cell__k">Payload</div><div class="status-cell__v mono" id="wlFramePayloadLen">–</div></div>
+              <div class="status-cell" style="min-width:0"><div class="status-cell__k">Frame body</div><div class="status-cell__v mono" id="wlFrameBodyLen">–</div></div>
+            </div>
+            <div class="bytes mono" id="wlFrameHex" style="display:block;margin-top:8px;overflow-wrap:anywhere">–</div>
+            <p class="field__hint">Sequence 0 placeholder. First two bytes: USB header <span class="mono">30 len</span>; BLE uses a channel-1 segmentation frame.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+              <button class="btn btn--ghost btn--sm" id="wlCopyPayload">Copy payload</button>
+              <button class="btn btn--ghost btn--sm" id="wlCopyFrame">Copy frame</button>
+            </div>
+          </details>
+          <details>
+            <summary class="field__label" style="cursor:pointer;display:list-item">Encoding reference</summary>
+            <p class="field__hint" style="margin-top:8px">Wire shapes: bool <span class="mono">08 01</span> (empty = false); uint <span class="mono">08 &lt;varint&gt;</span>; string <span class="mono">0a &lt;len&gt; &lt;utf8&gt;</span>; System ID <span class="mono">0a 12 0a 10 &lt;16-byte UUID&gt;</span>; service interval <span class="mono">08 &lt;timestamp&gt; 10 &lt;odometer&gt;</span> (zero fields omitted).</p>
           </details>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <button class="btn btn--primary btn--sm" id="wlWrite" data-act="advWrite" ${canEdit ? '' : 'disabled'}>Write register</button>
@@ -1251,19 +1558,20 @@
           </div>
         </div>
       </div>
-    </article>`;
+    </details>`;
 
     el.innerHTML = `${connBanner()}
       ${demoNote ? `<div class="section" style="display:grid;gap:12px">${demoNote}</div>` : ''}
       ${authNotice}
       ${pendingPanel()}
       <div class="section writer">
-        <article class="card wcard" aria-labelledby="lightTitle">
-          <header class="wcard__head">
-            <span class="wcard__icon wcard__icon--beam">${ICON.light}</span>
-            <div><h2 class="wcard__title" id="lightTitle">Bike light ${experimentalChip()}</h2>
-              <p class="wcard__sub">Switch the light at runtime, mark the output installed, or set the startup mode. Each is a separate, explicit choice.</p></div>
-          </header>
+        <details class="card wcard wcard--collapse" id="lightCard" ${draft.cards.light ? 'open' : ''}>
+          <summary class="wcard__head" aria-labelledby="lightTitle">
+            <span class="wcard__icon wcard__icon--card">${ICON.card.light}</span>
+            <div style="flex:1 1 auto;min-width:0"><h2 class="wcard__title" id="lightTitle">Bike light ${cardChip('light')}</h2>
+              <p class="wcard__sub">Runtime switch, installed flag, startup mode, power rating.</p></div>
+            <span class="card-chevron" aria-hidden="true"></span>
+          </summary>
           <div class="wcard__body">
             <div class="status-row" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
               <div class="status-cell" style="min-width:0"><div class="status-cell__k">Light output</div><div class="status-cell__v">${d.light.available === null ? 'unknown' : d.light.available ? `<span style="color:var(--ok)">${ICON.check}</span>enabled` : 'disabled'}</div></div>
@@ -1275,13 +1583,20 @@
             ${d.light.available === null ? `<div class="notice notice--warn">${ICON.warn}<div><strong>Light output state could not be read.</strong> Availability and startup-mode writes cannot be validated on this bike, so none will be offered.</div></div>` : ''}
 
             <div class="switch-row">
-              <div style="flex:1 1 auto;min-width:0"><div class="switch-row__t">Enable light output</div><div class="switch-row__d">Off = mark the light as not installed and switch it off</div>${chipsRow(opChip('LIGHT_AVAILABLE'))}</div>
+              <div style="flex:1 1 auto;min-width:0"><div class="switch-row__t">Enable light output</div><div class="switch-row__d">Off: clears the installed flag and switches the light off</div></div>
               <label class="switch" style="flex:0 0 auto"><input type="checkbox" id="lAvail" ${dr.available ? 'checked' : ''} ${canEdit ? '' : 'disabled'} aria-label="Enable light output"><span></span></label>
             </div>
-            ${!dr.available && d.isSpeedPedelec ? `<div class="notice notice--warn">${ICON.warn}<div><strong>Speed pedelec detected (legal max. ${NF0.format(d.legal)} km/h).</strong> Lighting is legally required on S-pedelecs in most countries. Do not disable it for road use.</div></div>` : ''}
+            ${!dr.available && d.isSpeedPedelec ? `<div class="notice notice--warn">${ICON.warn}<div><strong>Speed pedelec (legal max. ${NF0.format(d.legal)} km/h).</strong> Lighting is legally required on S-pedelecs in most countries.</div></div>` : ''}
 
-            <label class="check"><input type="checkbox" id="lSwitchOn" ${dr.switchOn ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> Also switch the light on now (optional, function test)</label>
-            ${chipsRow(opChip('LIGHT_SWITCH'))}
+            <div class="switch-row">
+              <div style="flex:1 1 auto;min-width:0">
+                <div class="switch-row__t">Light state</div>
+                <div class="switch-row__d">${d.light.on == null ? 'Not read' : d.light.on ? 'On' : 'Off'}</div>
+              </div>
+              ${d.light.on == null
+                ? `<button class="btn btn--ghost btn--sm" data-act="lightRefresh" ${(W.isLive || S.demo) ? '' : 'disabled'}>Refresh light state</button>`
+                : `<button class="btn btn--primary btn--sm" data-act="lightToggle" ${canEdit && !lightActionBusy ? '' : 'disabled'}>${d.light.on ? 'Turn light off' : 'Turn light on'}</button>`}
+            </div>
 
             <details ${dr.available ? 'open' : 'hidden'}>
               <summary class="field__label" style="cursor:pointer;display:list-item">Light power rating &amp; startup mode</summary>
@@ -1295,16 +1610,14 @@
                   <div class="presets">${PRESETS.map((p) => `<button class="preset" data-preset="${p}" aria-pressed="${dr.powerW != null && Math.abs(p - dr.powerW) < 0.05}" ${powerEditable ? '' : 'disabled'}>${NF1.format(p)} W</button>`).join('')}</div>
                   <p class="field__hint">${d.light.powerW === null
                     ? 'The current light power could not be read on this bike, so a power write is not offered.'
-                    : 'Known issue (observed not working): writing <span class="mono">0x1822</span> is reported not to change the active light power or lamp output on tested bikes, even when the write is acknowledged or read back. Nothing is retried or rolled back. Never set more than your lamps are rated for.'}</p>
-                  ${chipsRow(opChip('LIGHT_POWER'))}
+                    : 'Known issue (observed not working): writing <span class="mono">0x1822</span> does not change lamp output on tested bikes. Nothing is retried or rolled back. Never set more than your lamps are rated for.'}</p>
                 </div>
                 <label class="form" style="gap:6px"><span class="field__label" style="margin:0">Light startup mode (0x1821)</span>
                   <select class="select" id="lConfig" ${canEdit ? '' : 'disabled'}>
                     <option value="" ${dr.configTouched ? '' : 'selected'}>— choose a mode (leave unchanged) —</option>
                     ${[1, 2, 3].map((v) => `<option value="${v}" ${dr.configTouched && dr.config === v ? 'selected' : ''}>${v === 2 ? '2 – On power-up: remember last light state (documented)' : `${v} – Experimental / meaning not documented`}</option>`).join('')}
                   </select>
-                  <span class="field__hint">Only mode <span class="mono">2</span> ("remember last light state on power-up") is confirmed; modes <span class="mono">1</span> and <span class="mono">3</span> are undocumented experimental values. A mode must be chosen explicitly before it can be written.</span>
-                  ${chipsRow(opChip('LIGHT_CONFIG'))}
+                  <span class="field__hint">Only mode <span class="mono">2</span> ("remember last light state on power-up") is confirmed; modes <span class="mono">1</span> and <span class="mono">3</span> are undocumented.</span>
                 </label>
               </div>
             </details>
@@ -1317,18 +1630,18 @@
             </div>` : (planRes.error ? '' : `<div class="notice notice--ok">${ICON.check}<div>Nothing to write — the bike already matches your selection.</div></div>`)}
           </div>
           <footer class="wcard__foot">
-            ${d.light.available ? `<button class="btn btn--ghost btn--sm" data-act="lightToggle" ${canEdit ? '' : 'disabled'}>Switch light ${d.light.on ? 'off' : 'on'}</button>${chipsRow(opChip('LIGHT_SWITCH'))}` : ''}
             <span class="spacer"></span>
             <button class="btn ${dr.available || !d.light.available ? 'btn--beam' : 'btn--danger'}" data-act="lightApply" ${canEdit && steps.length && !planRes.error ? '' : 'disabled'}>${dr.available ? (d.light.available ? 'Write changes' : 'Enable light') : d.light.available ? 'Disable light' : 'Nothing to write'}</button>
           </footer>
-        </article>
+        </details>
 
-        <article class="card wcard" aria-labelledby="svcTitle">
-          <header class="wcard__head">
-            <span class="wcard__icon wcard__icon--primary">${ICON.wrench}</span>
-            <div><h2 class="wcard__title" id="svcTitle">Service interval ${experimentalChip()}</h2>
-              <p class="wcard__sub">Set the next service reminder or clear the stored interval.</p>${chipsRow(opChip('SERVICE_DUE'))}</div>
-          </header>
+        <details class="card wcard wcard--collapse" id="svcCard" ${draft.cards.service ? 'open' : ''}>
+          <summary class="wcard__head" aria-labelledby="svcTitle">
+            <span class="wcard__icon wcard__icon--card">${ICON.card.service}</span>
+            <div style="flex:1 1 auto;min-width:0"><h2 class="wcard__title" id="svcTitle">Service interval ${cardChip('service')}</h2>
+              <p class="wcard__sub">Set or clear the next service reminder.</p></div>
+            <span class="card-chevron" aria-hidden="true"></span>
+          </summary>
           <div class="wcard__body">
             <div class="status-row" style="grid-template-columns:1fr 1fr">
               <div class="status-cell"><div class="status-cell__k">Currently stored</div><div class="status-cell__v">${esc(serviceText(sv))}</div></div>
@@ -1338,29 +1651,47 @@
               ${opt('year', 'In one year', `Reminder on ${nextYear}`, so)}
               ${opt('km', 'After another 1,500 km', `Reminder at ${NF0.format((d.odoKm || 0) + 1500)} km`, so)}
               <label class="opt"><input type="radio" name="svc" value="custom" ${so === 'custom' ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
-                <div><div class="opt__t">Custom</div><div class="opt__d">Date and/or additional kilometres – whichever comes first</div></div>
+                <div><div class="opt__t">Custom</div><div class="opt__d">Date and/or additional kilometres</div></div>
                 ${so === 'custom' ? `<div class="opt__extra"><label>Date<input class="input" type="date" id="svcDate" value="${esc(draft.service.date)}" min="${localISODate()}"></label>
                   <label>additional km<input class="input" type="number" id="svcKm" min="1" step="1" placeholder="e.g. 2000" value="${esc(draft.service.km)}"></label></div>` : ''}
               </label>
-              ${opt('delete', 'Clear service interval', 'No service reminder will appear until a new interval is set', so, 'opt--danger')}
+              ${opt('delete', 'Clear service interval', 'Removes both date and distance targets', so, 'opt--danger')}
             </div>
-            <p class="field__hint" id="svcPresetNote">Setting a date or a distance replaces the other stored value. Use the custom option to store both.</p>
+            <p class="field__hint" id="svcPresetNote">Presets set one target and clear the other. Custom sets either or both.</p>
             <div class="diff"><div class="diff__row diff__row--head"><span>Value</span><span>Current</span><span></span><span>New</span></div>
               ${diffRow('Reminder', serviceText(sv), serviceTargetText(tgt))}</div>
-            <p class="field__hint">A reminder does not replace maintenance. One year and 1,500 km are presets only; follow your bike manufacturer's service schedule.</p>
+            <p class="field__hint">Presets are selection aids, not maintenance intervals.</p>
           </div>
           <footer class="wcard__foot"><span class="spacer"></span>
             <span class="field__hint" id="svcReasons">${serviceReasons(tgt).length ? 'Next: ' + esc(serviceReasons(tgt).join(' → ')) : 'All conditions met.'}</span>
             <button class="btn ${so === 'delete' ? 'btn--danger' : 'btn--primary'}" data-act="svcApply" ${canEdit && serviceValid(tgt) ? '' : 'disabled'}>${so === 'delete' ? 'Clear interval' : 'Write interval'}</button>
           </footer>
-        </article>
-        <article class="card wcard wcard--full" aria-labelledby="idTitle">
-          <header class="wcard__head">
-            <span class="wcard__icon wcard__icon--primary">${ICON.shield}</span>
-            <div><h2 class="wcard__title" id="idTitle">ID conflict &amp; System ID sync ${experimentalChip()}</h2>
-              <p class="wcard__sub">ID comparison is read-only. Writing the control unit's System ID is experimental and has not been verified on real hardware.</p>
-              <p class="wcard__sub">Compares the Bosch System ID (<span class="mono">BIKE_ID</span>) stored in the drive unit and the control unit – relevant after replacing a component (e.g. errors 112001 / 112002).</p></div>
-          </header>
+        </details>
+        <details class="card wcard wcard--collapse" id="portCard" ${draft.cards.ports ? 'open' : ''}>
+          <summary class="wcard__head" aria-labelledby="portTitle">
+            <span class="wcard__icon wcard__icon--card">${ICON.card.ports}</span>
+            <div style="flex:1 1 auto;min-width:0"><h2 class="wcard__title" id="portTitle">Power ports ${cardChip('ports')}</h2>
+              <p class="wcard__sub">Enable / disable the two accessory power-port registers.</p></div>
+            <span class="card-chevron" aria-hidden="true"></span>
+          </summary>
+          <div class="wcard__body">
+            ${portRows}
+            <p class="field__hint">Raw hex values. Unknown values are not treated as off. Unchanged and already-matching ports are not written. One write and one re-read per changed port.</p>
+          </div>
+          <footer class="wcard__foot">
+            <button class="btn btn--ghost btn--sm" data-act="portRead" ${portCanRead ? '' : 'disabled'}>Read port states</button>
+            <span class="spacer"></span>
+            <span class="field__hint" id="portReasons">${portReasonsText}</span>
+            <button class="btn btn--primary btn--sm" data-act="portApply" ${portCanStage ? '' : 'disabled'}>Stage changes</button>
+          </footer>
+        </details>
+        <details class="card wcard wcard--full wcard--collapse" id="idCard" ${draft.cards.id ? 'open' : ''}>
+          <summary class="wcard__head" aria-labelledby="idTitle">
+            <span class="wcard__icon wcard__icon--card">${ICON.card.id}</span>
+            <div style="flex:1 1 auto;min-width:0"><h2 class="wcard__title" id="idTitle">ID conflict &amp; System ID sync ${cardChip('id')}</h2>
+              <p class="wcard__sub">Compares BIKE_ID in drive unit (0x182c) and control unit (0x2184).</p></div>
+            <span class="card-chevron" aria-hidden="true"></span>
+          </summary>
           <div class="wcard__body">
             <div class="status-row" style="grid-template-columns:repeat(3,minmax(0,1fr))">
               <div class="status-cell"><div class="status-cell__k">Drive unit (0x182c)</div><div class="status-cell__v mono" style="font-size:var(--text-xs);word-break:break-all">${esc(d.duId || 'not read')}</div></div>
@@ -1368,18 +1699,17 @@
               <div class="status-cell"><div class="status-cell__k">Status</div><div class="status-cell__v">${!d.duId || !d.rcId ? 'incomplete' : d.idConflict ? `<span style="color:var(--bad)">${ICON.warn}</span>conflict detected` : `<span style="color:var(--ok)">${ICON.check}</span>matching`}</div></div>
             </div>
             ${d.idConflict
-              ? `<div class="notice notice--bad">${ICON.warn}<div><strong>System ID mismatch:</strong> the drive unit (<span class="mono">${esc(d.duId)}</span>) and the control unit (<span class="mono">${esc(d.rcId)}</span>) carry different System IDs. You can copy the drive unit's System ID into the control unit.</div></div>`
-              : d.duId && d.rcId ? `<div class="notice notice--ok">${ICON.check}<div><strong>No ID conflict between drive unit and control unit:</strong> both report the same System ID. Matching IDs alone do not establish the cause of an error, and no rewrite is required merely because the values match.</div></div>`
-              : `<div class="notice notice--warn">${ICON.warn}<div><strong>Comparison incomplete:</strong> at least one of the two System IDs could not be read on this bike / firmware version.</div></div>`}
-            <div class="notice">${ICON.info}<div><strong>Technical background:</strong> none of the open-source references document a ready-made Bosch "resolve ID conflict" command. They do document the two <span class="mono">BIKE_ID</span> registers (<span class="mono">0x182c</span> in the drive unit, <span class="mono">0x2184</span> in the control unit) and the control unit's configuration backup (<span class="mono">0x219d–0x219f</span>). This tool writes the 16-byte UUID as protobuf (<span class="mono">0a 12 0a 10 …</span>) and re-reads it to verify whether the bike accepts the change over USB without a dealer certificate. Experimental — untested.</div></div>
+              ? `<div class="notice notice--bad">${ICON.warn}<div><strong>System ID mismatch:</strong> drive unit <span class="mono">${esc(d.duId)}</span> / control unit <span class="mono">${esc(d.rcId)}</span>.</div></div>`
+              : d.duId && d.rcId ? `<div class="notice notice--ok">${ICON.check}<div>Matching IDs alone do not establish the cause of an error, and no rewrite is required merely because the values match.</div></div>`
+              : `<div class="notice notice--warn">${ICON.warn}<div><strong>Comparison incomplete:</strong> at least one System ID was not read.</div></div>`}
+            <div class="notice">${ICON.info}<div>Writes the 16-byte UUID as protobuf (<span class="mono">0a 12 0a 10 …</span>) to <span class="mono">0x2184</span> and re-reads it. No upstream reference documents a resolve-ID-conflict command. Experimental — untested.</div></div>
           </div>
           <footer class="wcard__foot">
-            <span class="field__hint" style="margin:0;flex:1 1 auto;min-width:0">Target: set control unit (<span class="mono">0x2184</span>) to the drive unit's ID</span>
-            ${chipsRow(opChip('BIKE_ID'))}
+            <span class="field__hint" style="margin:0;flex:1 1 auto;min-width:0">Target: <span class="mono">0x2184</span> ← drive-unit ID</span>
             <span class="spacer"></span>
             <button class="btn ${d.idConflict ? 'btn--primary' : 'btn--ghost'} btn--sm" data-act="idSyncRc" ${canEdit && duIdValid ? '' : 'disabled'}>Experimental: write drive-unit ID to control unit</button>
           </footer>
-        </article>
+        </details>
         ${writeLabCard}
       </div>`;
     bindWrite();
@@ -1429,7 +1759,6 @@
       else { dr.config = Number(cfg.value); dr.configTouched = true; }
       dr.touched = true; renderWrite();
     };
-    const sw = $('lSwitchOn'); if (sw) sw.onchange = () => { dr.switchOn = sw.checked; dr.touched = true; renderWrite(); };
     const setPower = (w, rerender = true) => {
       w = Math.min(18, Math.max(1, Math.round(w * 10) / 10));
       dr.powerW = w; dr.powerWTouched = true; dr.touched = true;
@@ -1445,6 +1774,16 @@
     document.querySelectorAll('input[name="svc"]').forEach((r) => { r.onchange = () => { draft.service.option = r.value; renderWrite(); }; });
     const sd = $('svcDate'); if (sd) sd.onchange = () => { draft.service.date = sd.value; renderWrite(); };
     const sk = $('svcKm'); if (sk) sk.onchange = () => { draft.service.km = sk.value; renderWrite(); };
+    document.querySelectorAll('[data-port]').forEach((sel) => {
+      sel.onchange = () => { draft.ports[sel.dataset.port] = sel.value; renderWrite(); };
+    });
+    // Every Configuration card is a dropdown. Keep its open state across the
+    // re-renders caused by its own controls, exactly like the raw-payload
+    // details in the Write Lab.
+    Object.keys(CARD_IDS).forEach((id) => {
+      const card = $(id);
+      if (card) card.ontoggle = () => { draft.cards[CARD_IDS[id]] = card.open; };
+    });
     // Write Lab: component chips, live search, register picker, friendly value
     // editors and the raw payload.
     const wlRawDetails = $('wlRawDetails');
@@ -1500,6 +1839,22 @@
       };
     }
     bindWriteLabResults();
+    const wlOnlyRead = $('wlOnlyRead');
+    if (wlOnlyRead) wlOnlyRead.onchange = () => {
+      draft.advanced.onlyRead = wlOnlyRead.checked;
+      draft.advanced.cursor = -1;
+      writeLabFilteredCache = null;
+      renderWrite();
+    };
+    const wlUseCurrent = $('wlUseCurrent');
+    if (wlUseCurrent) wlUseCurrent.onclick = () => useCurrentWriteLabValue();
+    const wlCopyPayload = $('wlCopyPayload');
+    if (wlCopyPayload) wlCopyPayload.onclick = () => copyToClipboard(draft.advanced.payload, 'Payload');
+    const wlCopyFrame = $('wlCopyFrame');
+    if (wlCopyFrame) wlCopyFrame.onclick = () => {
+      const hex = $('wlFrameHex');
+      copyToClipboard(hex ? hex.textContent : '', 'Frame');
+    };
     const wlRaw = $('wlPayload');
     const setRaw = (bytes) => {
       const hex = bytes && bytes.length ? W.util.toHex(bytes) : '';
@@ -1655,6 +2010,82 @@
     renderWrite();
   }
 
+  // Power ports: a read-only refresh and the staged enable/disable changes.
+  // No new writer or policy operation is introduced: each changed port is
+  // staged as a registry-bound GENERIC_WRITE step, which keeps the high-impact
+  // typed-name gate, the one-shot grant, the single write and the read-back.
+  function portCurrent(t) {
+    const cur = V(t.component + '.' + t.name);
+    if (!cur || cur.status !== 'ok') return 'not read';
+    const hex = cur.hex || '';
+    return hex ? `raw ${hex}` : 'empty payload';
+  }
+  // A port whose freshly read payload already equals the requested payload is
+  // not staged: this card, like the light card, never writes an unchanged value.
+  function portChanges() {
+    return PORT_TARGETS.filter((t) => {
+      const choice = draft.ports[t.key];
+      if (choice === 'unchanged') return false;
+      const cur = V(t.component + '.' + t.name);
+      return !(cur && cur.status === 'ok' && (cur.hex || '') === PORT_PAYLOAD[choice]);
+    });
+  }
+  function portReasons() {
+    const out = [];
+    if (!(W.isLive || S.demo)) out.push('Connect the eBike or start the demo');
+    if (!W.experimentalEnabled) out.push('Enable experimental writes');
+    if (!PORT_TARGETS.some((t) => draft.ports[t.key] !== 'unchanged')) out.push('Choose Enable or Disable for at least one port');
+    for (const t of PORT_TARGETS) {
+      if (draft.ports[t.key] === 'unchanged') continue;
+      const cur = V(t.component + '.' + t.name);
+      // An unknown value is never guessed as off.
+      if (!cur || cur.status !== 'ok') out.push(`Read ${t.label} first`);
+    }
+    return out;
+  }
+  async function readPortStates() {
+    if (!(W.isLive || S.demo)) {
+      await modal({ title: 'Cannot read', body: '<p>Connect the eBike or start the demo first.</p>', actions: [{ label: 'OK', value: true, cls: 'btn--primary' }] });
+      return;
+    }
+    for (const t of PORT_TARGETS) {
+      try { await W.readKey(t.component, t.name); } catch (_) { /* an unreadable register stays unknown */ }
+    }
+    renderWrite();
+    toast('Port states read — no write was sent');
+  }
+  async function applyPorts() {
+    if (!requireAuthorized()) return;
+    const reasons = portReasons();
+    if (reasons.length) {
+      await modal({ title: 'Cannot stage', body: `<p>${esc(reasons.join(' · '))}</p>`, actions: [{ label: 'OK', value: true, cls: 'btn--primary' }] });
+      return;
+    }
+    const steps = [];
+    for (const t of portChanges()) {
+      const choice = draft.ports[t.key];
+      const v = POLICY.validateHexPayload(PORT_PAYLOAD[choice]);
+      if (!v.ok) {
+        await modal({ title: 'Cannot stage', body: `<p>${esc(v.error || 'The port payload is invalid.')}</p>`, actions: [{ label: 'OK', value: true, cls: 'btn--primary' }] });
+        return;
+      }
+      const cur = V(t.component + '.' + t.name);
+      const entry = W.util.entryOf(t.component, t.name);
+      steps.push({
+        label: `${choice === 'enable' ? 'Enable' : 'Disable'} ${t.label} (${t.component}.${t.name})`,
+        bytes: v.hex,
+        op: 'GENERIC_WRITE', component: t.component, name: t.name, address: t.address,
+        typedName: '', unreadable: !!(entry && entry.readable === false),
+        intended: `raw ${v.hex}`, value: v.hex,
+        currentDisplay: cur && cur.status === 'ok' ? (cur.hex || '(empty)') : 'not read',
+        portLabel: t.label,
+        run: (owner) => W.Writers.generic(t.component, t.name, v.bytes, owner),
+      });
+    }
+    if (!steps.length) { toast('Nothing to write — the ports already match your selection'); return; }
+    stageSteps('ports', steps);
+  }
+
   // The Mini Remote probe: reads only. It never writes and never asks for
   // approval, because it sends no mutation.
   async function runRemoteProbe() {
@@ -1666,7 +2097,7 @@
     const go = await modal({
       title: 'Probe remote registers',
       body: `<p>This sends <strong>read requests only</strong> for ${count} registry registers whose name or label mentions the remote, the BLE stack, buttons, pairing or the eShift. Every register is read once, nothing is written, and nothing is retried.</p>
-        <p>The result may stay empty: the Mini Remote pairs over Bluetooth and does not have to appear in the wired registers.</p>`,
+        <p>Bluetooth-paired Mini Remotes may not appear in wired registers.</p>`,
       actions: [{ label: 'Cancel', value: false, cls: 'btn--ghost' }, { label: 'Probe now', value: true, cls: 'btn--primary' }],
     });
     if (!go) return;
@@ -1687,7 +2118,7 @@
     if (W.sessionMode !== 'demo') {
       await modal({
         title: 'Live fault clearing unavailable',
-        body: `<p>Clearing fault memory on a connected eBike is temporarily disabled: it batches several RPC mutations (delete-all plus per-entry deletes), which cannot be approved as individual writes. Reading the fault memory is unaffected.</p><p><strong>No data was sent.</strong></p>`,
+        body: `<p>Live fault clearing is disabled: it batches several RPC mutations that cannot be approved individually. Reading is unaffected.</p><p><strong>No data was sent.</strong></p>`,
         actions: [{ label: 'OK', value: true, cls: 'btn--primary' }],
       });
       return;
@@ -1700,7 +2131,7 @@
     const go = await modal({
       title: 'Clear fault memory (experimental)',
       body: `<p>This sends <span class="mono">DELETE_ALL_ISSUES (08 02)</span> and per-entry <span class="mono">DELETE_ISSUE (08 01 …)</span> RPC calls to <span class="mono">EXECUTE_INFORMATION_MANAGER_COMMAND</span> on components with stored errors, then re-reads the fault memory.</p>
-        <div class="notice notice--warn">${ICON.warn}<div><strong>This is a batch of ${rpcCount} mutating RPC calls under one confirmation</strong> (one delete-all plus one delete per stored entry). Each call is sent once and never retried; the batch stops when the session changes. Live fault clearing stays disabled.</div></div>
+        <div class="notice notice--warn">${ICON.warn}<div><strong>${rpcCount} mutating RPC calls under one confirmation</strong> (delete-all plus per-entry deletes). Each sent once, never retried; stops on session change. Live clearing stays disabled.</div></div>
         <div class="notice notice--warn">${ICON.warn}<div><strong>Experimental.</strong> On many firmware versions, clearing fault memory over USB without a dealer session is ignored or declined by the bike (the RPC returns empty/declined and the entries remain). Re-reading immediately verifies whether the entries were actually cleared.</div></div>`,
       actions: [{ label: 'Cancel', value: false, cls: 'btn--ghost' }, { label: `Send ${rpcCount} delete calls`, value: true, cls: 'btn--primary' }],
     });
@@ -1736,17 +2167,44 @@
     renderWrite();
   }
 
+  // The light on/off control is the one deliberate exception to the staged
+  // batch: one click = one write through the existing writer pipeline, with the
+  // same connection/capability gates, audit log and independent read-back. It
+  // never stages a row and never touches unrelated pending changes.
+  let lightSwitchBusy = false;
+  async function refreshLightState() {
+    if (!(W.isLive || S.demo)) { toast('Connect the eBike or start the demo first'); return; }
+    try {
+      await W.readKey('DriveUnit', 'BIKE_LIGHT');
+      renderWrite();
+      toast('Light state refreshed — nothing was written');
+    } catch (_) {
+      toast('Light state could not be read');
+    }
+  }
   async function lightToggle() {
+    if (lightSwitchBusy) return;
     if (!requireAuthorized()) return;
-    const on = !summary().light.on;
-    const step = {
-      label: on ? 'Switch light on' : 'Switch light off', bytes: on ? '08 01' : '(empty)',
-      op: 'LIGHT_SWITCH', component: 'DriveUnit', name: 'BIKE_LIGHT',
-      address: W.util.addrOf('DriveUnit', 'BIKE_LIGHT'), value: on,
-      run: (owner) => W.Writers.lightSwitch(on, owner),
-    };
-    stageSteps('light-toggle', [step]);
-    renderWrite();
+    if (W.busy) { toast('Another write is running'); return; }
+    const cur = summary().light;
+    if (cur.on == null) { toast('Light state unknown — refresh it first'); return; }
+    lightSwitchBusy = true;
+    try {
+      const on = !cur.on;
+      const step = {
+        label: on ? 'Switch light on' : 'Switch light off',
+        bytes: on ? '08 01' : '(empty)',
+        op: 'LIGHT_SWITCH', component: 'DriveUnit', name: 'BIKE_LIGHT',
+        address: W.util.addrOf('DriveUnit', 'BIKE_LIGHT'), value: on,
+        run: (owner) => W.Writers.lightSwitch(on, owner),
+      };
+      await runStepsModal(on ? 'Turning the light on' : 'Turning the light off', [step],
+        () => (S.demo ? 'The simulated light was re-read and matches.' : 'The light state was re-read and matches.'),
+        W.authorizationToken);
+    } finally {
+      lightSwitchBusy = false;
+      renderWrite();
+    }
   }
 
   // One typed gate per Apply batch. Every risky register gets its own input;
@@ -1872,7 +2330,9 @@
       case 'SERVICE_DUE': return 'Sets or clears the service reminder in the control unit.';
       case 'BIKE_ID': return 'Writes the drive unit System ID into the control unit.';
       case 'CLEAR_ISSUES': return 'Deletes stored fault-memory entries (simulation only).';
-      case 'GENERIC_WRITE': return 'Writes a raw payload to the selected registry register.';
+      case 'GENERIC_WRITE':
+        if (step.portLabel) return `${step.portLabel}: writes an unverified enable/disable payload (experimental, untested). A matching read-back does not prove a physical effect.`;
+        return 'Writes a raw payload to the selected registry register.';
       default: return 'Applies the change described above.';
     }
   }
@@ -1908,11 +2368,12 @@
         else {
           li.dataset.s = result.applied ? 'ok' : 'fail';
           li.querySelector('.ic').innerHTML = result.applied ? ICON.check : ICON.x;
+          const ack = result.ackStatus ? `ack ${result.ackStatus}` : (result.statusName || 'no response');
           li.querySelector('.res').textContent = result.applied ? `verified: ${result.after}`
             : result.declined ? 'declined — nothing sent'
               : result.sessionChanged ? 'blocked — session changed'
                 : result.blocked ? 'blocked — not authorized'
-                  : (result.error || `not applied (${result.statusName || 'no response'})`);
+                  : (result.error || `not applied (${ack})`);
         }
       }, options);
     } catch (err) {
@@ -1930,7 +2391,7 @@
       ? `<div class="notice notice--bad">${ICON.warn}<div><strong>Nothing was written.</strong> ${esc(planError)}</div></div>`
       : allOk
         ? `<div class="notice notice--ok">${ICON.check}<div><strong>${okHead}</strong> ${esc(successText() || okTail)}</div></div>`
-        : `<div class="notice notice--bad">${ICON.warn}<div><strong>${failed && failed.declined ? 'Declined:' : failed && failed.sessionChanged ? 'Session changed:' : failed && failed.blocked ? 'Blocked:' : failed && failed.interrupted ? 'Unverified:' : 'Not confirmed:'}</strong> ${esc(failed ? failed.label : '')}. ${failed && failed.blocked ? esc(failed.error || 'Experimental writes are not enabled.') : failed && failed.interrupted ? esc(failed.reason || 'The session changed during the write, so the result is unverified.') : failed && failed.acked ? 'The eBike acknowledged the write, but re-reading did not confirm the value. Acknowledgment alone is not proof of application.' : 'The read-back did not confirm the value, so whether the eBike applied it is unknown.'} ${failed && failed.interrupted && failed.transmitted === false ? '' : 'No further steps were sent.'} See the session log for details.</div></div>`;
+        : `<div class="notice notice--bad">${ICON.warn}<div><strong>${failed && failed.declined ? 'Declined:' : failed && failed.sessionChanged ? 'Session changed:' : failed && failed.blocked ? 'Blocked:' : failed && failed.interrupted ? 'Unverified:' : 'Not confirmed:'}</strong> ${esc(failed ? failed.label : '')}. ${failed && failed.blocked ? esc(failed.error || 'Experimental writes are not enabled.') : failed && failed.interrupted ? esc(failed.reason || 'The session changed during the write, so the result is unverified.') : failed && failed.acked ? `The eBike acknowledged the write${failed.ackStatus && failed.ackStatus !== 'SUCCESS' ? ' (' + esc(failed.ackStatus) + ')' : ''}, but re-reading did not confirm the value. Acknowledgment alone is not proof of application.` : `The bike did not acknowledge the write${failed && failed.ackStatus ? ' (' + esc(failed.ackStatus) + ')' : ''} and the read-back did not confirm the value, so whether the eBike applied it is unknown.`} ${failed && failed.interrupted && failed.transmitted === false ? '' : 'No further steps were sent.'} See the session log for details.</div></div>`;
     const btn = $('runClose'); if (btn) { btn.disabled = false; btn.textContent = 'Done'; }
     const cancelBtn = $('runCancel'); if (cancelBtn) cancelBtn.remove();
     toast(allOk ? (S.demo ? 'Confirmed in simulation' : 'Confirmed by read-back') : (planError ? 'Nothing was written' : failed && failed.declined ? 'Write declined — nothing sent' : failed && failed.sessionChanged ? 'Blocked — session changed' : failed && failed.blocked ? 'Blocked — not authorized' : 'Change not confirmed'));
@@ -1947,7 +2408,7 @@
     el.innerHTML = `${connBanner()}<div class="section report">
       <div class="card">
         <h2 class="section__title">Diagnostic report</h2>
-        <p class="section__sub" style="margin-bottom:20px">Multi-page A4 PDF: overview, ride statistics, components &amp; battery, configuration, assistance modes and software versions.</p>
+        <p class="section__sub" style="margin-bottom:20px">Multi-page A4 PDF.</p>
         <div class="form">
           <label>Customer reference<input class="input" id="rRef" placeholder="e.g. name, job number or frame number" value="${esc(reportOpts.ref)}"></label>
           <label>Notes<textarea id="rNotes" placeholder="e.g. light enabled, 6.0 W">${esc(reportOpts.notes)}</textarea></label>
@@ -2004,11 +2465,11 @@
       : `<tr>
       <td class="mono">${esc(s.at.toLocaleTimeString('en-GB'))}</td><td>${esc(s.label)}</td><td><span class="bytes">${esc(s.sent)}</span></td>
       <td class="mono">${esc(yn(s.before))} → ${esc(yn(s.after))}</td>
-      <td>${s.interrupted ? chip('unverified — interrupted', 'chip--bad') : s.blocked ? chip('blocked', 'chip--bad') : s.applied ? chip('verified', 'chip--ok') : chip(s.acked ? 'not confirmed' : 'rejected', 'chip--bad')}</td></tr>`;
+      <td>${s.interrupted ? chip('unverified — interrupted', 'chip--bad') : s.blocked ? chip('blocked', 'chip--bad') : s.applied ? chip('verified', 'chip--ok') : chip(s.acked ? 'not confirmed' : 'rejected', 'chip--bad')}${s.ackStatus ? ` <span class="field__hint">ack: ${esc(s.ackStatus)}</span>` : ''}</td></tr>`;
   }
   function renderLogHistory() {
     if (!Array.isArray(S.logHistory) || !S.logHistory.length) return '';
-    return `<div class="section"><div class="section__head"><div><h3 class="section__title">Previous sessions (${escNum(S.logHistory.length)})</h3><p class="section__sub">Preserved across reconnects so interrupted or unverified writes stay visible</p></div></div>`
+    return `<div class="section"><div class="section__head"><div><h3 class="section__title">Previous sessions (${escNum(S.logHistory.length)})</h3><p class="section__sub">Preserved across reconnects</p></div></div>`
       + S.logHistory.map((p) => {
         const rows = (p.entries || []).slice().reverse().map(renderLogRow).join('');
         return `<div class="card table-wrap" style="margin-bottom:12px"><table class="t"><thead><tr><th>Time</th><th>Action</th><th>Sent</th><th>Before → After</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -2018,10 +2479,10 @@
     const el = $('view-log');
     const rows = S.log.slice().reverse().map(renderLogRow).join('');
     el.innerHTML = `${connBanner()}<div class="section">
-      <div class="section__head"><div><h2 class="section__title">Session log</h2><p class="section__sub">Every change in this session, with payload sent and re-read result</p></div>
+      <div class="section__head"><div><h2 class="section__title">Session log</h2><p class="section__sub">Writes in this session, with payload and re-read result</p></div>
         <div class="log-actions"><button class="btn btn--ghost btn--sm" data-act="saveJson">Save readout (.json)</button><button class="btn btn--ghost btn--sm" data-act="debugLog">Download debug log</button>
         <label class="check"><input type="checkbox" id="exportAnon" ${exportOpts.anonymize ? 'checked' : ''}> Anonymise identifiers</label></div>
-        <p class="field__hint" style="margin:6px 0 0">Full JSON contains serial numbers, the System ID, the key-lock number, raw register payload bytes, Mini Remote probe bytes/addresses and BLE peer-database records; the full debug log contains write payloads. "Anonymise identifiers" masks those identifiers, clears the raw bytes of identifier and BLE peer registers, reduces each probe row to component/name/status, and removes payload and read-back bytes from the log. The anonymised JSON can still be opened.</p>
+        <p class="field__hint" style="margin:6px 0 0">Full JSON and debug log contain identifiers and raw payload bytes. "Anonymise identifiers" masks them, reduces probe rows and removes payload/read-back bytes. The anonymised JSON can still be opened.</p>
       </div>
       <div class="card table-wrap">${rows ? `<table class="t"><thead><tr><th>Time</th><th>Action</th><th>Sent</th><th>Before → After</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="muted" style="padding:8px 4px">No changes in this session yet.</p>'}</div>
     </div>${renderLogHistory()}`;
@@ -2184,13 +2645,13 @@
   function experimentalConfirm() {
     return modal({
       title: 'Enable experimental writes?',
-      body: `<div class="notice notice--warn">${ICON.warn}<div><strong>Experimental.</strong> Enabling this lets the Configure controls request hardware-changing writes.</div></div>
+      body: `<div class="notice notice--warn">${ICON.warn}<div><strong>Experimental.</strong> Enabling this lets the Configuration controls request hardware-changing writes.</div></div>
         <ul>
           <li>Every staged change is shown with its <strong>register, old and new value, payload, tier and evidence</strong> before the batch is applied.</li>
           <li><strong>Nothing is retried</strong> automatically.</li>
           <li><strong>Nothing is rolled back</strong> if a change is unwanted.</li>
         </ul>
-        <p>The authorization lasts only for this session and clears on disconnect, connection loss, or opening a saved readout.</p>`,
+        <p>Authorization is session-only.</p>`,
       actions: [
         { label: 'Cancel', value: false, cls: 'btn--ghost' },
         { label: 'Enable experimental writes', value: true, cls: 'btn--primary' },
@@ -2198,8 +2659,8 @@
     });
   }
 
-  // The session consent is asked once per session: when the Configure tab is
-  // opened and the session may not write yet. Cancelling keeps the Configure
+  // The session consent is asked once per session: when the Configuration tab is
+  // opened and the session may not write yet. Cancelling keeps the Configuration
   // controls read-only and the banner offers the same dialog again. The
   // authorization itself still clears on disconnect, connection loss, opening a
   // saved readout and a demo switch; the dialog is asked again afterwards.
@@ -2223,39 +2684,133 @@
   // clears the draft and allows the consent dialog to appear again.
   function onSessionChange() {
     resetWriteLabDraft();
+    resetPortDraft();
+    resetCardState();
     clearPending();
     consentAsked = false;
   }
 
   let lastConnectMethod = 'usb';
+  let connectAttemptInProgress = false;
+
+  // The three real transports. Reconnect never invents another mode and never
+  // falls back silently: an unavailable mode is shown with the reason.
+  function reconnectModes() {
+    const hasUsb = typeof navigator !== 'undefined' && !!navigator.usb;
+    const hasBt = typeof navigator !== 'undefined' && !!navigator.bluetooth;
+    return [
+      { id: 'usb', label: 'USB', available: hasUsb, reason: 'WebUSB is not available in this browser.' },
+      {
+        id: 'ble-mcsp', label: 'Bluetooth (MCSP)',
+        available: hasBt && !!(window.Bes3BleMcsp && window.Bes3BleMcsp.requestMcspDevice),
+        reason: hasBt ? 'The MCSP transport module is not loaded.' : 'Web Bluetooth is not available in this browser.',
+      },
+      {
+        id: 'ble-live', label: 'Bluetooth (Live Data, read-only)',
+        available: hasBt && !!(window.Bes3LiveDataBle && window.Bes3LiveDataBle.requestLiveDataDevice),
+        reason: hasBt ? 'The Live Data transport module is not loaded.' : 'Web Bluetooth is not available in this browser.',
+      },
+    ];
+  }
+
+  // One picker shared by the top bar and every tab-level reconnect control.
+  // The last used mode is preselected when it is available.
+  function reconnectModeDialog() {
+    const modes = reconnectModes();
+    const firstAvailable = modes.find((m) => m.available);
+    let selected = modes.some((m) => m.id === lastConnectMethod && m.available)
+      ? lastConnectMethod
+      : (firstAvailable ? firstAvailable.id : '');
+    const rows = modes.map((m) => `<label class="opt" style="cursor:${m.available ? 'pointer' : 'not-allowed'};${m.available ? '' : 'opacity:.55'}">
+      <input type="radio" name="reconnect-mode" value="${esc(m.id)}" ${m.id === selected ? 'checked' : ''} ${m.available ? '' : 'disabled'}>
+      <div><div class="opt__t">${esc(m.label)}</div>${m.available ? '' : `<div class="opt__d">${esc(m.reason)}</div>`}</div>
+    </label>`).join('');
+    const actions = [
+      { label: 'Cancel', value: false, cls: 'btn--ghost' },
+      { label: 'Connect', value: true, cls: 'btn--primary', id: 'reconnectGo', disabled: !selected },
+    ];
+    let confirmed = false;
+    return modal({
+      title: 'Reconnect',
+      body: `<p>Choose the connection mode.</p><div role="radiogroup" aria-label="Connection mode" style="display:grid;gap:8px">${rows}</div>`,
+      actions,
+      onOpen: () => {
+        const body = $('modalBody');
+        const inputs = body ? Array.from(body.querySelectorAll('input[name="reconnect-mode"]')) : [];
+        const go = $('reconnectGo');
+        const update = () => {
+          const checked = inputs.find((r) => r.checked && !r.disabled);
+          if (go) go.disabled = !checked;
+        };
+        inputs.forEach((r) => {
+          r.onchange = () => {
+            if (!r.checked) return;
+            // A radio group has one selection; enforce it here as well so a
+            // synthetic DOM that does not uncheck siblings behaves the same.
+            inputs.forEach((o) => { if (o !== r) o.checked = false; });
+            selected = r.value;
+            update();
+          };
+        });
+        // Read the actual selection when Connect is clicked, so the result does
+        // not depend on a change event having fired.
+        if (go) {
+          const original = go.onclick;
+          go.onclick = () => {
+            const checked = inputs.find((r) => r.checked && !r.disabled);
+            if (checked) selected = checked.value;
+            confirmed = !!checked;
+            if (original) original();
+          };
+        }
+        update();
+      },
+    }).then((res) => (res === true && confirmed ? selected : false));
+  }
+
+  async function promptReconnect() {
+    if (connectAttemptInProgress) return;
+    const mode = await reconnectModeDialog();
+    if (!mode) return;
+    await doConnect(true, mode);
+  }
 
   async function doConnect(keepCurrentTab = false, method = 'usb') {
-    const accepted = await ensureRiskAccepted();
-    if (!accepted) return;
-    lastConnectMethod = method;
+    // Repeated clicks must not start concurrent connection attempts. The guard
+    // is taken before the first await so two synchronous clicks cannot both
+    // pass the check.
+    if (connectAttemptInProgress) return;
+    connectAttemptInProgress = true;
     try {
+      const accepted = await ensureRiskAccepted();
+      if (!accepted) return;
       if (!keepCurrentTab && !hasData()) tab = 'read';
+      // A transport switch invalidates staged drafts, pending changes and the
+      // session consent. Pending writes are never replayed automatically.
+      onSessionChange();
       if (method === 'ble-mcsp') {
         await W.connectBleMcsp();
         toast('eBike connected via Bluetooth (MCSP) and read');
       } else if (method === 'ble-live') {
         await W.connectLiveDataBle();
         tab = 'read';
-        render();
         toast('Live Data BLE connected and streaming');
       } else {
         await W.connect();
         toast('eBike connected and read');
       }
+      lastConnectMethod = method;
     } catch (err) {
       if (S.mode === 'connecting' || S.mode === 'reading') S.mode = Object.keys(S.values).length ? 'file' : 'idle';
-      render();
       // The doctor only classifies the error and the state the UI already has;
       // it never opens a device or sends a frame.
       const body = window.Bes3ConnectionDoctor
         ? window.Bes3ConnectionDoctor.render(err, S)
         : `<p>${esc((err && err.message) || String(err))}</p><p>Tips: Is the eBike switched on? Are you using a USB <strong>data</strong> cable or paired over Bluetooth? Are other diagnostic tabs closed?</p>`;
       await modal({ title: 'Connection failed', body, actions: [{ label: 'OK', value: true, cls: 'btn--primary' }] });
+    } finally {
+      connectAttemptInProgress = false;
+      render();
     }
   }
 
@@ -2270,7 +2825,10 @@
         const a = t.dataset.act;
         if (a === 'lightApply') await applyLight();
         else if (a === 'svcApply') await applyService();
+        else if (a === 'portRead') await readPortStates();
+        else if (a === 'portApply') await applyPorts();
         else if (a === 'lightToggle') await lightToggle();
+        else if (a === 'lightRefresh') await refreshLightState();
         else if (a === 'pendingApply') await applyPending();
         else if (a === 'pendingDiscard') discardPending();
         else if (a === 'pdfDownload') downloadPdf();
@@ -2297,7 +2855,7 @@
         else if (a === 'connect') await doConnect(false, 'usb');
         else if (a === 'connectBle') await doConnect(false, 'ble-mcsp');
         else if (a === 'connectBleLive') await doConnect(false, 'ble-live');
-        else if (a === 'reconnect') await doConnect(true, lastConnectMethod);
+        else if (a === 'reconnect') await promptReconnect();
         else if (a === 'idSyncRc') await applyIdSync();
         else if (a === 'clearIssues') await applyClearIssues();
         else if (a === 'advWrite') await guidedAdvancedWrite();
@@ -2324,7 +2882,7 @@
   $('btnConnect').onclick = () => doConnect(false, 'usb');
   const btnBle = $('btnConnectBle'); if (btnBle) btnBle.onclick = () => doConnect(false, 'ble-mcsp');
   const btnBleLive = $('btnConnectBleLive'); if (btnBleLive) btnBleLive.onclick = () => doConnect(false, 'ble-live');
-  const trBtn = $('btnTopReconnect'); if (trBtn) trBtn.onclick = () => doConnect(true, lastConnectMethod);
+  const trBtn = $('btnTopReconnect'); if (trBtn) trBtn.onclick = () => promptReconnect();
   $('btnDemo').onclick = async () => { if (!(await ensureRiskAccepted())) return; if (!(await demoNotice())) return; onSessionChange(); tab = 'read'; await W.startDemo(); toast('Demo eBike read'); };
   $('btnReread').onclick = async () => {
     if (S.mode === 'reading' || S.mode === 'connecting' || W.busy) return;
@@ -2339,8 +2897,16 @@
     }
   };
   $('btnDisconnect').onclick = async () => {
-    if (W.isLive) { await W.disconnect(); toast('Disconnected – data stays visible'); }
-    else { onSessionChange(); await W.closeReadout(); render(); }
+    // Live Data keeps its last values as a stale snapshot; closing a saved
+    // readout still clears everything.
+    if (W.isLive || (S.bleLive && S.bleLive.active)) {
+      await W.disconnect({ keepLiveStale: true });
+      toast('Disconnected – data stays visible');
+    } else {
+      onSessionChange();
+      await W.closeReadout();
+      render();
+    }
   };
   $('btnOpenFile').onclick = () => $('fileInput').click();
   $('fileInput').onchange = async (e) => {
@@ -2385,6 +2951,7 @@
       .catch(() => {});
   }
   injectVersionLabels();
+  checkDeployedVersion();
   // The risk warning is shown before the rest of the UI is enabled. Continue is
   // the only action, so this promise stays pending (and the modal stays up)
   // until the user accepts.

@@ -1,9 +1,9 @@
 # Upstream sources and provenance
 
-This repository builds on three upstream open-source projects. This file
-records their repository URLs, the maintainer-provided contribution
-descriptions, the license terms verified during review, and how each
-source relates to this codebase.
+This repository builds on three upstream open-source projects and one
+additional read-only research reference. This file records their repository
+URLs, the maintainer-provided contribution descriptions, the license terms
+verified during review, and how each source relates to this codebase.
 
 It deliberately separates three things that are easy to conflate:
 
@@ -28,6 +28,7 @@ they are not pinned dependencies and may have advanced since.
 | [`rweijnen/bosch-bes3-reader`](https://github.com/rweijnen/bosch-bes3-reader) | Protocol core, WebUSB transport, address registry, fault-memory RPCs, part images, and the Classic Reader | Code MIT; data CC BY 4.0 (`LICENSE-DATA`) | `cd9a5510ae1091c467d8d5a586a23723c17a9249` |
 | [`radiohound/bosch-smart-system-ble`](https://github.com/radiohound/bosch-smart-system-ble) | Smart System BLE/MCSP research, write-behavior and response-handling insights, and research informing verify-by-reread | Docs/data CC BY 4.0 (redundo.app); code MIT | `97def2bbbfae0d373e67d9cd3911c1dae35f4323` |
 | [`revlat/bes3-analyzer`](https://github.com/revlat/bes3-analyzer/tree/main) | CAN-bus datapoint analysis and cross-verification of light and service-interval addresses | MIT (Copyright 2025 revlat) | `46fd5c374934ab3f6bf4825c464f57afdda80746` |
+| [`bg443/BikeBridge`](https://codeberg.org/bg443/BikeBridge) | Bosch BES3 MCSP/BLE protocol research: segmentation reassembly, `MobileApp` (`0x40xx`) peer request handling, registration ordering, and assist-mode message schemas | GPL-3.0-or-later — **research reference only, no code copied** | source archive reviewed 2026-11-07 (the archive carries no commit metadata) |
 
 ## How each source relates to this repository
 
@@ -58,6 +59,16 @@ present in this repository:
   work.
 - **`revlat/bes3-analyzer`** — used as research input for cross-checking
   datapoints. No files are copied.
+- **`bg443/BikeBridge`** — used strictly as a read-only protocol reference for
+  the Bosch BES3 (Smart System) parts of that project. No source file, Kotlin
+  class, generated protobuf module, test, or verbatim lookup table is copied
+  into this repository. BikeBridge is licensed **GPL-3.0-or-later**, which is
+  not compatible with redistributing its code under this project's MIT
+  license; only factual, functional wire-protocol observations (frame layout,
+  message-type numbering, response status values, node addresses, and message
+  schemas) were studied and independently re-implemented. The Shimano and SRAM
+  parts of BikeBridge are outside the scope of this project and were not used.
+  See "BikeBridge — read-only protocol reference" below for what was inspected.
 - **Bosch eBike Help Center error pages** — the short English error summaries
   in `web/workshop/issues.js` are paraphrased from
   `https://help.bosch-ebike.com/en/help-center/error/<code>` (for example
@@ -150,6 +161,10 @@ statement:
 - **radiohound/bosch-smart-system-ble** — CC BY 4.0 for docs/data, MIT for
   code.
 - **revlat/bes3-analyzer** — MIT.
+- **bg443/BikeBridge** — GPL-3.0-or-later. It is a research reference only:
+  no BikeBridge code, schema files, or tables are redistributed here, so the
+  GPL does not extend to this repository. BikeBridge is credited by name and
+  URL, and nothing from it is relicensed as MIT or CC BY 4.0.
 
 `LICENSE-DATA` applies only to the researched datasets described in it.
 Bundled component images, third-party libraries, and other assets are not
@@ -206,11 +221,44 @@ asserted to be covered by it; see "Restored local `LICENSE-DATA`" above.
   project is not affiliated with, authorized by, or endorsed by Robert Bosch
   GmbH.
 
+### bg443/BikeBridge
+
+- License (verified): `LICENSE` — GNU General Public License, Version 3,
+  29 June 2007 (`GPL-3.0-or-later`).
+- README (verified): describes a BLE companion app for eBikes that shows raw
+  data in both directions, can send custom payloads to any Bluetooth
+  characteristic, and links its Bluetooth constants and parsers. It covers
+  several manufacturers; only the Bosch BES3 material was used here.
+- Files inspected for this project (read-only, none copied):
+  - `app/src/main/java/dev/bg/bikebridge/util/bikes/bosch/` — `BoschProtocolHandler.kt`,
+    `BoschRegistration.kt`, `DatapointTable.kt`, `McspDeFramer.kt`,
+    `McspFrame.kt`, `McspMessageType.kt`, `McspCommandBuilder.kt`,
+    `McspCommandSender.kt`, `McspRpcManager.kt`, `McspMessageBus.kt`,
+    `RegistrationOrder.kt`, `UnknownMcspRepository.kt`.
+  - `app/src/test/java/dev/bg/bikebridge/util/bikes/bosch/` — the JUnit tests
+    for the same area.
+  - `app/proto/bes3/datatypes.proto` and `app/proto/bes3/registration.proto`.
+  - `app/src/main/java/dev/bg/bikebridge/ui/screens/bike/BikeScreen.kt` and
+    `ui/components/BikeSettings.kt` for the custom-payload and settings UI.
+- What was taken from it: protocol facts only, re-implemented from scratch
+  against this project's own architecture and registry. See
+  `docs/investigation-assist-modes.md` for the assist-mode schema notes and
+  the internal task specification for the transport work.
+- What was deliberately **not** taken: BikeBridge's automatic clock and
+  timezone writes, rider-identity push, fixed-delay registration replay, the
+  `v % 10 == 0` charge-cycle heuristic, and its unredacted unknown-ID sample
+  storage. This project's write-safety gates and verify-by-reread rules are
+  unchanged.
+
 ## Retrieval limitations
 
 - Evidence was gathered read-only via repository web pages, raw license
   files, and commit Atom feeds. No repository was cloned and no upstream
   code was run.
+- BikeBridge was reviewed from a source archive supplied to the maintainer on
+  2026-11-07. The archive carries no commit metadata, so no commit hash is
+  asserted for it. The archive was not built, executed, or added to this
+  repository, and no file from it is redistributed.
 - Commit hashes are the head of `main` at review time and identify the
   revision inspected; they are not asserted to be permanent.
 - Full upstream source files were not retrieved or diffed, so the

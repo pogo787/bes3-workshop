@@ -69,11 +69,30 @@ it). Each carries a fixed operation id and target:
 | `Writers.syncBikeId(targetComponent, uuid, owner)` | `BIKE_ID` | `<target>.BIKE_ID` (0x2184 / 0x182c) |
 | `Writers.generic(component, name, payloadBytes, owner)` | `GENERIC_WRITE` | a registry-writable, non-blocked register |
 
+The **light switch** button is the one direct entry point. It calls
+`Writers.lightSwitch(on, owner)` inside a one-step `runPlan` (via
+`runStepsModal`) instead of adding a row to `Pending changes`. It still passes
+the same gate order below, including the grant, the single-writer lock and the
+read-back. It is a limited exception to staging only, never to verification, and
+it never stages or applies any other pending row.
+
+The **Power ports** card has no `Writers.*` entry of its own. It stages one
+`GENERIC_WRITE` step per changed port (`DriveUnit.LOW_POWER_PORT_ACTIVE` /
+`DriveUnit.HIGH_POWER_PORT_ACTIVE`) and calls `Writers.generic`, so it reuses
+the same gate order below. Both registers are deliberately **normal-tier**
+(`NORMAL_TIER_OVERRIDE`), so the staged batch needs no typed register-name
+confirmation, like the light and service controls; the other `PORT` registers
+keep the high-impact gate in the Write Lab. The card is experimental and
+untested; the `08 01` / `08 00` payloads are an unverified assumption.
+
 Writer-specific pre-checks that run **before** `writeVerified()` and can throw
 `WRITE_BLOCKED` with zero frames:
 
-- `Writers.lightPower` — `POLICY.validateLightPower(watt)` (finite, 1.0–18.0 W,
-  0.1 W steps) then `POLICY.assertWritable('LIGHT_POWER')`.
+- `Writers.lightPower` — `POLICY.validateLightPower(watt)` (finite, 1.0–18.0 in
+  0.1 steps; these are Workshop input bounds, not a verified register
+  specification) then `POLICY.assertWritable('LIGHT_POWER')`. The payload uses
+  `field 1 varint = round(watt × 10)`; that scaling is an unverified
+  implementation assumption.
 - `Writers.generic` — `genericTargetReason(component, name)` (must be in the
   registry and not reserved for a dedicated control; a `registry-readonly`
   entry is allowed and only needs the typed register name).

@@ -23,10 +23,11 @@ The engine (`web/workshop/engine.js`) enforces it at execution time, and the UI
 | --- | --- | --- |
 | Enable light output | `DriveUnit.BIKE_LIGHT_AVAILABLE` (0x1820) | availability change is explicit and the current state is readable |
 | Disable light output | `DriveUnit.BIKE_LIGHT` (0x181c, off), then `BIKE_LIGHT_AVAILABLE` (0x1820, false) | availability change is explicit and the light is currently installed |
-| Switch light on/off (runtime) | `DriveUnit.BIKE_LIGHT` (0x181c) | explicit action; current state readable |
-| Switch light on (function test) | `DriveUnit.BIKE_LIGHT` (0x181c) | explicit opt-in checkbox on the light card |
+| Switch light on/off (runtime) | `DriveUnit.BIKE_LIGHT` (0x181c) | explicit **Turn light on / Turn light off** button, current state readable; writes immediately (the one staging exception) and is judged only by a fresh read-back |
 | Set startup mode | `DriveUnit.BIKE_LIGHT_CONFIGURATION` (0x1821) | explicit valid mode (1/2/3) chosen and different from current |
 | Set light power | `DriveUnit.BIKE_LIGHT_POWER` (0x1822) | explicit value in 1.0–18.0 W (0.1 W steps) different from the current reading, current value readable, planned as the last step of the light write plan and covered by the same lamp confirmation |
+| Enable / disable Low Power Port | `DriveUnit.LOW_POWER_PORT_ACTIVE` (0x1831) | explicit Enable or Disable chosen (Unchanged never writes), current value read successfully, experimental writes enabled; staged as a normal-tier `GENERIC_WRITE` step (no typed-name gate) |
+| Enable / disable High Power Port | `DriveUnit.HIGH_POWER_PORT_ACTIVE` (0x1832) | same conditions as the Low Power Port; only the changed ports are staged |
 | Set/clear service interval | `RemoteControl.SERVICE_DUE` | explicit target |
 | Sync System ID | `RemoteControl.BIKE_ID` (0x2184) | explicit action; current drive-unit ID readable |
 | Clear fault memory | `EXECUTE_INFORMATION_MANAGER_COMMAND*` RPCs | demo only; live is temporarily unavailable (see below) |
@@ -34,6 +35,41 @@ The engine (`web/workshop/engine.js`) enforces it at execution time, and the UI
 
 There is no hidden default. A fresh draft writes nothing: no default power, no
 default startup mode, and no implicit switch-on.
+
+**Light switch exception.** The light state button is the one deliberate
+exception to the staged `Pending changes` flow. One click sends exactly one
+`BIKE_LIGHT` write through `runPlan`/`writeVerified`, with the same connection
+and authorization checks, one-shot grant, single-writer lock, audit log and
+independent read-back as a batch step. It is not an exception to verification:
+it is shown as successful only when the fresh read-back matches; an acknowledged
+write whose read-back does not match is reported as unverified. It never stages
+a row, never touches unrelated pending changes, is disabled while another write
+or batch is active or while the light state is unknown, and is never replayed on
+reconnect. When the state is unknown, the card offers a read-only refresh
+instead of a blind write.
+
+The `1.0–18.0` / `0.1`-step limits for `BIKE_LIGHT_POWER` are Workshop
+input-validation bounds, not a verified register specification. The payload is
+built as `field 1 varint = round(input × 10)`; that scaling and the register's
+electrical meaning are not independently established. The operation carries the
+`known-issue` evidence label.
+
+**Power ports are experimental and untested.** The two port registers are
+listed in the address registry with kind `unknown` and no confirmed encoding.
+The Workshop writes `08 01` to enable and `08 00` to disable as an unverified
+assumption; these bytes are shown in the staged row. The card adds no new
+policy operation and no new engine writer: each changed port is a registry-bound
+`GENERIC_WRITE` step. Both registers are deliberately **normal-tier**
+(`NORMAL_TIER_OVERRIDE`), so — like the light and service controls — the staged
+batch needs no typed register-name confirmation; the one-shot grant, single
+write and independent read-back still apply. The Write Lab keeps the typed-name
+gate for every other `PORT` register. Unchanged ports
+are never written, and a value that was not read successfully is never guessed
+as off. A matching read-back does not prove that a port is physically enabled,
+that an accessory is wired correctly, or that the setting persists after a
+restart. A port whose freshly read payload already equals the requested payload
+is not staged, and a value that was not read successfully is never guessed as
+off. No hardware validation has been performed.
 
 ## Unknown / unread values
 
@@ -239,7 +275,9 @@ when the register is readable, and that nothing is retried or rolled back.
     register" warning and the grant carries the typed name (`typedName`), which
     the writer boundary compares with the target register.
   - **normal** — everything else registry-writable (including the dedicated light
-    switch, availability and configuration registers).
+    switch, availability and configuration registers, and — by explicit
+    `NORMAL_TIER_OVERRIDE` — `LOW_POWER_PORT_ACTIVE` and
+    `HIGH_POWER_PORT_ACTIVE`). Other `PORT`-named registers stay high-impact.
   The old five-register `GENERIC_ALLOWLIST` is gone; `POLICY.genericDenied` still
   returns only the blocked reason.
 - **One typed gate per Apply batch.** Staging never carries a typed name. Apply
@@ -379,7 +417,7 @@ phases:
     only a changed, valid value emits it, an unchanged value adds no step, and an
     invalid or unread value blocks the whole plan with zero steps. The policy
     check also pins the four-tier counts (1 blocked, 861 registry-readonly,
-    24 high-impact, 9 normal) over all 895 registry entries, and
+    22 high-impact, 11 normal) over all 895 registry entries, and
     `judgeWrite(..., { readable:false })` stays `unverified (cannot be read
     back)`. The Write Lab writer checks: an unregistered register,
     `BIKE_LIGHT_POWER` via the generic writer, a registry read-only register
@@ -448,7 +486,7 @@ node tools/check-workshop-light.mjs
 
 Status (executed): Node.js **v24.22.1**. `node --check` passed for
 `write-policy.js`, `engine.js`, `ui.js` and this runner; the runner reported
-**209 passed, 0 failed, 0 skipped** (the policy/source checks plus the engine
+**222 passed, 0 failed, 0 skipped** (the policy/source checks plus the engine
 checks against the simulated transport); `git diff --check` was clean. One of the
 source checks validates the System ID card's experimental/untested wording at
 source level; it is not browser execution. This establishes the policy and the

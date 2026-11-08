@@ -359,8 +359,8 @@ check('validateHexPayload + genericTier: raw payload and policy tiers', () => {
   eq(REGISTRY.length, 895, 'the registry has 895 entries');
   eq(counts.blocked, 1, 'one blocked registry entry');
   eq(counts['registry-readonly'], 861, '861 read-only entries are listed');
-  eq(counts['high-impact'], 24, '24 writable entries need high-impact confirmation');
-  eq(counts.normal, 9, '9 writable entries are normal-tier');
+  eq(counts['high-impact'], 22, '22 writable entries need high-impact confirmation');
+  eq(counts.normal, 11, '11 writable entries are normal-tier');
   const unreadable = POLICY.judgeWrite(true, null, false, { readable: false });
   eq(unreadable.applied, false, 'an unreadable register is never applied');
   eq(unreadable.statusName, 'unverified (cannot be read back)', 'unreadable write is unverified');
@@ -680,8 +680,9 @@ check('source: System ID sync is labeled experimental/untested (source check)', 
   const heading = ui.split('\n').find((line) => line.includes('id="idTitle"'));
   assert(heading, 'System ID card heading present');
   assert(heading.includes('ID conflict &amp; System ID sync'), 'card heading text kept');
-  assert(heading.includes('experimentalChip()'), 'permanent Experimental badge beside heading');
-  assert(ui.includes("ID comparison is read-only. Writing the control unit's System ID is experimental and has not been verified on real hardware."), 'read-only/untested subtitle present');
+  assert(heading.includes("cardChip('id')"), 'one individual evidence chip beside heading');
+  assert(ui.includes('Compares BIKE_ID in drive unit (0x182c) and control unit (0x2184).'), 'the subtitle states the compared registers');
+  assert(!/ID comparison is read-only\. Writing the control unit's System ID is experimental/.test(ui), 'the subtitle no longer repeats the header badge');
   assert(ui.includes('>Experimental: write drive-unit ID to control unit</button>'), 'action button labels the write as experimental in all states');
   assert(!ui.includes('Resolve ID conflict'), 'no wording that promises to resolve a conflict');
   assert(!ui.includes('Rewrite System ID to control unit'), 'old action wording removed');
@@ -736,21 +737,24 @@ check('all OP entries have complete experimental and evidence metadata', () => {
   eq(POLICY.describeOp('NOPE'), null, 'unknown op returns null');
 });
 
-// 26. Source-level labeling check: each of the seven hardware-changing controls
-// renders an evidence chip from describeOp. This inspects the rendered source
-// text only; it is NOT DOM/browser testing.
-check('source: each hardware-changing control renders an evidence chip (source check)', () => {
+// 26. Source-level labeling check: exactly one distinct warning chip per
+// Configuration card, derived from that card's evidence level. Control rows no
+// longer carry their own chips. Source text only; NOT DOM/browser testing.
+check('source: one distinct evidence chip per Configuration card (source check)', () => {
   const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
-  assert(/function opChip\s*\(/.test(ui), 'opChip helper present');
-  assert(/POLICY\.describeOp\(/.test(ui), 'opChip reads describeOp');
-  for (const id of ['LIGHT_SWITCH', 'LIGHT_AVAILABLE', 'LIGHT_CONFIG', 'LIGHT_POWER', 'SERVICE_DUE', 'BIKE_ID', 'CLEAR_ISSUES']) {
-    assert(ui.includes("opChip('" + id + "')"), 'chip rendered for ' + id);
+  assert(/function cardChip\s*\(/.test(ui), 'cardChip helper present');
+  assert(ui.includes('CARD_EVIDENCE_OP'), 'the per-card evidence map is defined');
+  assert(/POLICY\.describeOp\(/.test(ui), 'the chip reads describeOp');
+  for (const key of ['light', 'service', 'ports', 'id', 'lab']) {
+    assert(ui.includes("cardChip('" + key + "')"), 'one chip for the ' + key + ' card');
   }
+  eq((ui.match(/cardChip\('/g) || []).length, 5, 'exactly five card chips');
+  assert(ui.includes('Mixed evidence') && ui.includes('Observed working') && ui.includes('Untested'), 'labels reflect different evidence levels');
+  eq((ui.match(/chipsRow\(opChip\('/g) || []).length, 1, 'only the Session Log keeps a control-level chip');
 });
 
 // 27. Source-level layout check: evidence chips sit in a wrapping flex
-// container, and every opChip usage is wrapped by that container. Rendered
-// source only; this is NOT DOM/browser testing.
+// container, and every remaining opChip usage is wrapped by that container.
 check('source: evidence chips use a wrapping flex container (source check)', () => {
   const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
   assert(ui.includes('const CHIP_ROW_STYLE = '), 'chip row style constant present');
@@ -759,16 +763,17 @@ check('source: evidence chips use a wrapping flex container (source check)', () 
   assert(ui.includes('max-width:100%;white-space:normal;overflow-wrap:anywhere'), 'chip allows wrapping within the container width');
   const usages = (ui.match(/opChip\('/g) || []).length;
   const wrapped = (ui.match(/chipsRow\(opChip\('/g) || []).length;
-  assert(usages >= 7, 'at least seven evidence chips: ' + usages);
+  eq(usages, 1, 'one control-level evidence chip remains: ' + usages);
   eq(wrapped, usages, 'every opChip usage is wrapped in a chips row');
 });
 
-// 28. Source-level layout check: the lAvail switch is a sibling of the chip
-// container (not inside it), the text block can shrink, and the switch cannot.
+// 28. Source-level layout check: the lAvail switch is a sibling of the text
+// block, the text block can shrink, and the switch cannot. No chip sits in the
+// switch row any more.
 check('source: lAvail switch is outside the chip container (source check)', () => {
   const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
   assert(!/chipsRow\([^)]*lAvail/.test(ui), 'lAvail is not passed into a chip container');
-  assert(ui.includes("chipsRow(opChip('LIGHT_AVAILABLE'))"), 'enable-light chip is wrapped');
+  assert(!ui.includes("chipsRow(opChip('LIGHT_AVAILABLE'))"), 'the enable-light row has no chip');
   assert(ui.includes('style="flex:1 1 auto;min-width:0"'), 'enable-light text block can shrink');
   assert(ui.includes('class="switch" style="flex:0 0 auto"'), 'enable-light switch stays visible');
 });
@@ -786,16 +791,16 @@ check('source: visible chip text never contains the evidence note (source check)
   }
 });
 
-// 29b. Source-level chip layout: each card header carries exactly one
-// "Experimental" marker, rows carry evidence only, and the Write Lab title is
-// plain with one "Experimental · Untested" header chip and a single combined
-// warning paragraph. Source text only; this is NOT DOM/browser testing.
-check('source: one Experimental header chip per card, evidence-only rows (source check)', () => {
+// 29b. Source-level chip layout: each Configuration card carries exactly one
+// individual warning chip in its header, derived from its own evidence level.
+// Source text only; this is NOT DOM/browser testing.
+check('source: one distinct warning chip per card, no per-option chips (source check)', () => {
   const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
-  assert(ui.includes("const experimentalChip = () => chip('Experimental', 'chip--warn')"), 'header chip helper present');
-  eq((ui.match(/experimentalChip\(\)/g) || []).length, 4, 'one header chip on the four hardware-changing cards');
+  assert(ui.includes("const experimentalChip = () => chip('Experimental', 'chip--warn')"), 'the generic helper remains for the Session Log');
+  eq((ui.match(/experimentalChip\(\)/g) || []).length, 1, 'the generic Experimental chip is used only outside Configuration');
+  eq((ui.match(/cardChip\('/g) || []).length, 5, 'one distinct chip on each of the five cards');
   assert(!ui.includes('<span class="chip chip--warn">Experimental</span>'), 'no inline Experimental chips remain');
-  assert(ui.includes("id=\"advTitle\">Write Lab ${chip('Experimental · Untested'"), 'Write Lab has one header chip');
+  assert(ui.includes("id=\"advTitle\">Write Lab ${cardChip('lab')}"), 'the Write Lab header carries its card chip');
   assert(!ui.includes('Write Lab (experimental)'), 'Write Lab title is plain');
   assert(!ui.includes('<strong>Experimental.</strong> The Write Lab sends a raw payload'), 'standalone Write Lab banner removed');
   assert(ui.includes('The target always comes from the address registry, never from a typed address.'), 'combined warning paragraph present');
@@ -995,7 +1000,7 @@ check('source: Write Lab is registry-bound and shows the unverified notice (sour
   assert(ui.includes('Read-only in registry.'), 'read-only-in-registry notice present');
   assert(ui.includes('Write-only register.'), 'write-only notice present');
   assert(ui.includes('data-act="advWrite"'), 'write button present');
-  assert(ui.includes("chip('Experimental · Untested', 'chip--warn')"), 'generic evidence sits in the header chip');
+  assert(ui.includes("cardChip('lab')"), 'one individual evidence chip sits in the Write Lab header');
   assert(ui.includes('Unverified register.'), 'unverified-register notice present');
   assert(ui.includes('High-impact register.'), 'high-impact banner present');
   assert(ui.includes("op: 'GENERIC_WRITE'"), 'the step declares the generic operation');
@@ -1012,7 +1017,7 @@ check('source: Write Lab is registry-bound and shows the unverified notice (sour
 // path.
 check('source: Write Lab card has chips, search, one Write button and a reason list (source check)', () => {
   const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
-  assert(/const writeLabCard = `<article/.test(ui), 'the Write Lab card is always rendered');
+  assert(/const writeLabCard = `<details/.test(ui), 'the Write Lab card is always rendered');
   assert(!/const writeLabCard = !sessionOpen \? '' :/.test(ui), 'the card is not hidden without a session');
   assert(/<details id="wlRawDetails" \$\{draft\.advanced\.rawOpen \? 'open' : ''\}>/.test(ui), 'the raw payload is collapsible');
   assert(ui.includes('data-wlcomp'), 'component filter chips are rendered');
@@ -1348,6 +1353,92 @@ check('lint: write-path invariants are pinned (source check)', () => {
   eq((engine.match(/approvedWrite\s*=/g) || []).length, 2, 'approvedWrite is assigned in exactly two places');
   assert(/owner\.approvedWrite = false;/.test(engine), 'writeVerified consumes the grant (sets it false)');
   assert(/owner\.approvedWrite = grant \|\| false;/.test(engine), 'runPlan issues the grant');
+});
+
+// 45b. The power-port card is a dedicated UI feature built on the existing
+// registry-bound writer: no new policy operation, no new engine writer, no
+// change to any gate. Source-level only; the DOM-level staging check is below.
+check('source: power ports reuse the generic writer and are marked untested (source check)', () => {
+  const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
+  const engine = readFileSync(path.join(repo, 'web', 'workshop', 'engine.js'), 'utf8');
+  const demo = readFileSync(path.join(repo, 'web', 'workshop', 'demo-data.js'), 'utf8');
+  const policy = readFileSync(path.join(repo, 'web', 'workshop', 'write-policy.js'), 'utf8');
+  const css = readFileSync(path.join(repo, 'web', 'workshop', 'workshop.css'), 'utf8');
+  assert(ui.includes('LOW_POWER_PORT_ACTIVE') && ui.includes('HIGH_POWER_PORT_ACTIVE'), 'both power-port registers are targeted');
+  assert(!ui.includes('MULTI_PURPOSE_PORT_STATUS'), 'the card is limited to the two power-port registers');
+  eq((ui.match(/const PORT_TARGETS = \[/g) || []).length, 1, 'one port target list');
+  assert(/const PORT_PAYLOAD = \{ enable: '08 01', disable: '08 00' \}/.test(ui), 'the two unverified payloads are declared');
+  assert(ui.includes("cardChip('ports')"), 'the card carries its individual Experimental · Untested chip');
+  assert(!/no confirmed encoding/.test(ui), 'the verbose payload notice is removed from the card');
+  assert(ui.includes('Unknown values are not treated as off'), 'unknown values are not guessed');
+  assert(ui.includes('data-act="portRead"'), 'a read-only refresh control is present');
+  assert(/async function readPortStates\(\)[\s\S]*?W\.readKey\(/.test(ui), 'the refresh performs reads only');
+  assert(ui.includes("stageSteps('ports', steps)"), 'changes are staged, not sent');
+  assert(/W\.Writers\.generic\(t\.component, t\.name, v\.bytes, owner\)/.test(ui), 'each port uses the registry-bound generic writer');
+  assert(ui.includes("cardChip('ports')"), 'the power-ports card carries one evidence chip');
+  assert(ui.includes('if (source === \'light\' || source === \'ports\')'), 'card sources replace their own staged rows');
+  assert(ui.includes('pending[i].source === source'), 'restaging removes only rows from the same card');
+  assert(ui.includes('function portChanges()'), 'an unchanged payload is not staged');
+  assert(ui.includes('entry.readable === false'), 'unreadable is derived from the registry');
+  assert(ui.includes('function portAddressLabel('), 'a missing registry address cannot break the card');
+  assert(ui.includes('<details class="card wcard wcard--collapse" id="portCard"'), 'the card is a collapsible dropdown');
+  assert(/\.writer \{ display: grid; grid-template-columns: minmax\(0, 1fr\);/.test(css), 'Configure cards stack one after another');
+  assert(css.includes('.wcard--collapse > summary.wcard__head'), 'the dropdown header is styled');
+  // Every Configure card is a closed dropdown with persisted open state.
+  for (const id of ['lightCard', 'svcCard', 'portCard', 'idCard', 'advCard']) {
+    assert(ui.includes(`id="${id}"`), id + ' is rendered');
+    assert(new RegExp(`id="${id}"[^>]*\\$\\{draft\\.cards\\.`).test(ui), id + ' reads its open state from the draft');
+  }
+  assert(ui.includes("const CARD_IDS = {") && ui.includes('card.ontoggle = () =>'), 'all card toggles are bound');
+  assert(ui.includes('resetCardState()'), 'the open state is cleared on a session change');
+  eq((ui.match(/<summary class="wcard__head"/g) || []).length, 5, 'five collapsible card headers');
+  eq(Object.keys(POLICY.OP).length, 8, 'no new policy operation was introduced');
+  eq((engine.match(/const Writers = \{/g) || []).length, 1, 'the Writers object is unchanged in shape');
+  assert(!engine.includes('powerPort('), 'no new engine writer was added');
+  assert(!policy.includes('POWER_PORT:'), 'the gated write policy was not extended');
+  for (const name of ['LOW_POWER_PORT_ACTIVE', 'HIGH_POWER_PORT_ACTIVE']) {
+    eq(POLICY.genericTier('DriveUnit', name).tier, 'normal', name + ' is deliberately normal-tier');
+  }
+  // The generic Write Lab still gates the other PORT registers.
+  eq(POLICY.genericTier('DriveUnit', 'MULTI_PURPOSE_PORT_STATUS').tier, 'high-impact', 'other PORT registers stay high-impact');
+  assert(demo.includes('"6193": "08 01"') && demo.includes('"6194": "08 00"'), 'demo seeds both port registers');
+});
+
+// 45c. The tab is named Configuration and every card icon shares one neutral
+// line colour while keeping its own glyph, like the PDF report's vector icons.
+check('source: Configuration tab name and homogeneous individual card icons (source check)', () => {
+  const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
+  const css = readFileSync(path.join(repo, 'web', 'workshop', 'workshop.css'), 'utf8');
+  const html = readFileSync(path.join(repo, 'index.html'), 'utf8');
+  assert(/data-tab="write">Configuration</.test(html), 'the tab is labelled Configuration');
+  assert(!/data-tab="write">Configure</.test(html), 'the old tab name is gone');
+  assert(ui.includes('ICON.card = {'), 'one card-icon set is defined');
+  for (const key of ['light', 'service', 'ports', 'id', 'lab', 'pending']) {
+    assert(ui.includes('ICON.card.' + key), key + ' card has its own glyph');
+  }
+  for (const g of ['light: ICON.light', 'id: ICON.shield', 'lab: ICON.wrench']) {
+    assert(ui.includes(g), 'existing glyph reused: ' + g);
+  }
+  for (const key of ['service', 'ports']) {
+    const m = new RegExp(key + ": '(<svg[^']*?)'").exec(ui);
+    assert(m && /stroke-width="1\.8"/.test(m[1]) && /stroke="currentColor"/.test(m[1]), key + ' glyph uses the shared line style');
+  }
+  eq((ui.match(/wcard__icon--card/g) || []).length, 6, 'all six card icons use the homogeneous colour class');
+  assert(!/wcard__icon--(beam|primary)/.test(ui), 'the mixed card icon colours are gone');
+  assert(css.includes('.wcard__icon--card { background: var(--surface-2); color: var(--ink-2);'), 'one neutral tile/line colour is defined');
+  // Exactly one evidence chip per card, in the header; no per-option chips.
+  const summaries = [...ui.matchAll(/<summary\b[^>]*>([\s\S]*?)<\/summary>/g)].map((m) => m[1]);
+  assert(summaries.length >= 5, 'the card summaries are present');
+  for (const body of summaries) {
+    assert(!/chipsRow\(opChip\(/.test(body), 'no per-option evidence chip inside a card header');
+  }
+  assert(ui.includes("id=\"portTitle\">Power ports ${cardChip('ports')}"), 'the Power ports title carries its own chip');
+  assert(!/Experimental · untested\.<\/p>/.test(ui), 'the Power ports subtitle does not repeat the chip');
+  eq((ui.match(/cardChip\('/g) || []).length, 5, 'one distinct chip per Configuration card');
+  const subs = [...ui.matchAll(/class="wcard__sub">([^<]*)</g)].map((m) => m[1]);
+  for (const s of subs) {
+    assert(!/experimental|untested/i.test(s), 'subtitle carries facts only: ' + s);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -1699,6 +1790,7 @@ function hardwareTrap(label) {
 
 let W = null;
 let sandbox = null;
+let uiHarness = null;       // the DOM-level UI harness (set when the UI checks start)
 let hardware = null;
 let mutations = 0;          // write/RPC request frames sent to the fake transport
 let writeFrames = 0;        // type 2 (WRITE) frames only
@@ -3774,6 +3866,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
 
   await checkAsync('UI sandbox: the fake DOM loads the real UI and accepts the risk warning', async () => {
     ui = createUiHarness(sandbox);
+    uiHarness = ui;
     eq(ui.doc.getElementById('btnDemo'), ui.btnDemo, 'the demo button is wired');
     eq(ui.modal.hidden, false, 'the risk modal is open at boot');
     ui.acceptRisk();
@@ -3807,7 +3900,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
     await ui.startDemo();
     resetFrameCounters();
     sandbox.Bes3WorkshopUI.render();
-    const read = ui.doc.getElementById('view-read');
+    const read = uiHarness.doc.getElementById('view-read');
     assert(!/Mini Remote|Probe remote registers|Not visible over USB/.test(read.innerHTML),
       'the demo readout has no Mini Remote card, probe block or placeholder');
     const key = 'RemoteControl.BLE_CENTRAL_DATABASE';
@@ -3862,10 +3955,17 @@ check('source: the light theme, the modal focus and the re-read control (source 
     ui.switchTab('write');
     await sleep(0);
   };
-  const stageLight = async () => {
-    await ui.dom.dispatchAction('lightToggle');
-    const lamp = ui.doc.getElementById('pendingLampConfirm');
-    if (lamp) { lamp.checked = true; lamp.onchange(); }
+  // Stage a registry-bound Write Lab row. The light switch is now a direct
+  // action, so batch tests use the Write Lab for a second staged row.
+  const stageLab = async (key, hex) => {
+    const btn = ui.doc.querySelectorAll('[data-wlkey]').find((b) => b.dataset.wlkey === key);
+    assert(btn, 'Write Lab target is listed: ' + key);
+    btn.onclick();
+    await sleep(0);
+    const raw = ui.doc.getElementById('wlPayload');
+    raw.value = hex;
+    raw.oninput();
+    await ui.dom.dispatchAction('advWrite');
   };
 
   await checkAsync('UI service interval: Clear is always offered, reads first and stages the empty payload', async () => {
@@ -3897,8 +3997,8 @@ check('source: the light theme, the modal focus and the re-read control (source 
     assert(mutations > before, 'the clear was transmitted through the normal plan');
     const stored = W.state.values['RemoteControl.SERVICE_DUE'];
     assert(stored && stored.status === 'ok' && stored.value && stored.value.timestamp === 0 && stored.value.odometer === 0, 'the read-back shows the reminder cleared');
-    ui.switchTab('read');
-    assert(/Service interval<\/span><\/div>\s*<span class="kpi__value[^"]*">Not set</.test(ui.doc.getElementById('view-read').innerHTML), 'the Overview shows it as not set');
+    uiHarness.switchTab('read');
+    assert(/Service interval<\/span><\/div>\s*<span class="kpi__value[^"]*">Not set</.test(uiHarness.doc.getElementById('view-read').innerHTML), 'the Overview shows it as not set');
     eq(writeFrames, 1, 'exactly one write frame for the clear');
     await W.disconnect();
   });
@@ -3908,7 +4008,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
     await openWriteTab();
     resetFrameCounters();
     const note = ui.doc.getElementById('svcPresetNote');
-    assert(note && /replaces the other stored value/.test(note.textContent), 'the preset note explains that one field replaces the other');
+    assert(note && /set one target and clear the other/i.test(note.textContent), 'the preset note states that a preset replaces the other target');
     const radios = writeView().querySelectorAll('input[name="svc"]');
     const custom = radios.find((r) => r.value === 'custom');
     assert(custom, 'the custom option exists');
@@ -3944,8 +4044,8 @@ check('source: the light theme, the modal focus and the re-read control (source 
     const value = setServiceFromHex('10 97 fa 99 01');
     eq(value.odometer, 2522391, 'the km-only fixture decodes to 2,522,391 m');
     eq(value.timestamp, 0, 'the km-only fixture has no date');
-    ui.switchTab('read');
-    const kpiHtml = ui.doc.getElementById('view-read').innerHTML;
+    uiHarness.switchTab('read');
+    const kpiHtml = uiHarness.doc.getElementById('view-read').innerHTML;
     assert(/2,522 km \(no date\)/.test(kpiHtml), 'the Overview KPI shows the distance and says the date is missing');
     ui.switchTab('write');
     const cardHtml = writeView().innerHTML;
@@ -3963,8 +4063,8 @@ check('source: the light theme, the modal focus and the re-read control (source 
     const value = setServiceFromHex('0a 06 08 c0 9a f8 cb 0d');
     eq(value.timestamp, 1824458400, 'the date-only fixture decodes to 2027-10-25 10:00 UTC');
     eq(value.odometer, 0, 'the date-only fixture has no distance');
-    ui.switchTab('read');
-    const kpiHtml = ui.doc.getElementById('view-read').innerHTML;
+    uiHarness.switchTab('read');
+    const kpiHtml = uiHarness.doc.getElementById('view-read').innerHTML;
     assert(/date: 25 Oct 2027 \(no distance\)/.test(kpiHtml), 'the Overview KPI shows the date and says the distance is missing');
     ui.switchTab('write');
     const cardHtml = writeView().innerHTML;
@@ -3981,8 +4081,8 @@ check('source: the light theme, the modal focus and the re-read control (source 
     const value = setServiceFromHex('');
     eq(value.timestamp, 0, 'an empty payload has no date');
     eq(value.odometer, 0, 'an empty payload has no distance');
-    ui.switchTab('read');
-    const kpiHtml = ui.doc.getElementById('view-read').innerHTML;
+    uiHarness.switchTab('read');
+    const kpiHtml = uiHarness.doc.getElementById('view-read').innerHTML;
     assert(/Service interval<\/span><\/div>\s*<span class="kpi__value[^"]*">Not set</.test(kpiHtml), 'the Overview KPI says Not set');
     ui.switchTab('write');
     const cardHtml = writeView().innerHTML;
@@ -4028,7 +4128,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
     await openWriteTab();
     const before = mutations;
     ui.doc.activeElement = ui.btnDemo;
-    await ui.dom.dispatchAction('lightToggle');
+    await ui.dom.dispatchAction('svcApply');
     assert(/id="pendingChanges"/.test(writeView().innerHTML), 'the pending panel is visible');
     assert(/Pending changes \(1\)/.test(writeView().innerHTML), 'one change is staged');
     assert(/Apply 1 change/.test(writeView().innerHTML), 'the batch button names the count');
@@ -4061,13 +4161,291 @@ check('source: the light theme, the modal focus and the re-read control (source 
     assert(!/id="pendingChanges"/.test(writeView().innerHTML), 'Edit removes the staged row');
   });
 
+  await checkAsync('UI Write Lab: the frame preview, payload annotation and current-value prefill are read-only', async () => {
+    assert(ui, 'the UI sandbox loaded');
+    await openWriteTab();
+    const target = ui.doc.querySelectorAll('[data-wlkey]').find((b) => b.dataset.wlkey === 'DriveUnit.BIKE_LIGHT')
+      || ui.doc.querySelectorAll('[data-wlkey]')[0];
+    assert(target, 'a Write Lab register is listed');
+    target.onclick();
+    await sleep(0);
+    const key = target.dataset.wlkey;
+    const entry = REGISTRY.find((e) => e.component + '.' + e.name === key);
+    assert(entry, 'the selected register is in the registry');
+    const raw = ui.doc.getElementById('wlPayload');
+    raw.value = '08 01';
+    raw.oninput();
+    const expected = W.util.toHex(W.util.previewWriteFrame(entry.address, [0x08, 0x01]));
+    eq(ui.doc.getElementById('wlFrameHex').textContent, expected, 'the preview shows the exact write frame');
+    eq(ui.doc.getElementById('wlFrameTarget').textContent,
+      entry.component + '.' + entry.name + ' · 0x' + entry.address.toString(16), 'the preview names the target');
+    eq(ui.doc.getElementById('wlFramePayloadLen').textContent, '2 bytes', 'the payload length is shown');
+    eq(ui.doc.getElementById('wlPayloadCount').textContent, '2 / 64 bytes', 'the byte budget is shown');
+    assert(/field 1 · varint · 1/.test(ui.doc.getElementById('wlAnnotate').textContent),
+      'the payload annotation decodes field 1');
+    // Prefill from the current value is a draft edit, never a request.
+    const before = mutations;
+    const useBtn = ui.doc.getElementById('wlUseCurrent');
+    if (useBtn && !useBtn.disabled) {
+      useBtn.onclick();
+      await sleep(0);
+      eq(mutations, before, 'Use current value sends no frame');
+    }
+    assert(ui.doc.getElementById('wlCopyPayload'), 'Copy payload is present');
+    assert(ui.doc.getElementById('wlCopyFrame'), 'Copy frame is present');
+    assert(!/id="pendingChanges"/.test(writeView().innerHTML), 'the preview alone stages nothing');
+  });
+
+  await checkAsync('UI power ports: a read-only refresh and one staged write per changed port', async () => {
+    assert(ui, 'the UI sandbox loaded');
+    await openWriteTab();
+    resetFrameCounters();
+    // The refresh is read-only: it must not emit any mutation frame.
+    await ui.dom.dispatchAction('portRead');
+    eq(mutations, 0, 'reading the port states sends no write frame');
+    eq(W.state.values['DriveUnit.LOW_POWER_PORT_ACTIVE'].hex, '08 01', 'the low-power port is read');
+    eq(W.state.values['DriveUnit.HIGH_POWER_PORT_ACTIVE'].hex, '08 00', 'the high-power port is read');
+    // Unchanged is the default; staging it must remain a no-op.
+    const initialHtml = writeView().innerHTML;
+    assert(/id="port_LOW"/.test(initialHtml) && /id="port_HIGH"/.test(initialHtml), 'both port selectors are rendered');
+    assert(/value="unchanged" selected/.test(initialHtml), 'both ports default to Unchanged');
+    assert(!/id="pendingChanges"/.test(initialHtml), 'no change is staged at first');
+    // Change only the low-power port to Disable (the demo seed is 08 01).
+    const low0 = ui.doc.getElementById('port_LOW');
+    assert(low0, 'the low-power port selector is present');
+    low0.value = 'disable';
+    low0.onchange();
+    assert(/value="disable" selected/.test(writeView().innerHTML), 'the choice survives a re-render');
+    await ui.dom.dispatchAction('portApply');
+    const keys = Array.from(ui.doc.querySelectorAll('[data-pending-key]')).map((n) => n.dataset.pendingKey);
+    eq(keys.length, 1, 'only the changed port is staged');
+    eq(keys[0], 'DriveUnit.LOW_POWER_PORT_ACTIVE', 'the staged row names the exact register');
+    const html = writeView().innerHTML;
+    assert(/id="pendingChanges"/.test(html), 'the staged batch is visible');
+    assert(/08 00/.test(html), 'the staged payload is the disable payload');
+    assert(/Experimental · Untested|Untested/.test(html), 'the untested marking is visible');
+    assert(/High-impact register|Power port: experimental/.test(html), 'the high-impact / untested warning is visible');
+    eq(mutations, 0, 'staging never sends a frame');
+  });
+
+  await checkAsync('UI reconnect: one picker offers the three transports, disables unavailable modes and preselects the last one', async () => {
+    assert(ui, 'the UI sandbox loaded');
+    await openWriteTab();
+    const nav = sandbox.navigator;
+    const saved = { usb: nav.usb, bt: nav.bluetooth, mcsp: sandbox.Bes3BleMcsp, live: sandbox.Bes3LiveDataBle, mcspConnect: W.connectBleMcsp, liveConnect: W.connectLiveDataBle, usbConnect: W.connect };
+    const cancelModal = () => {
+      const actions = ui.doc.getElementById('modalActions');
+      const cancel = actions.children[0];
+      if (cancel) cancel.onclick();
+    };
+    try {
+      // No transport available: all three modes are disabled with a reason.
+      nav.usb = undefined;
+      nav.bluetooth = undefined;
+      let p = ui.dom.dispatchAction('reconnect');
+      await sleep(0);
+      eq(ui.doc.getElementById('modalTitle').textContent, 'Reconnect', 'the picker opens from a reconnect control');
+      let inputs = ui.doc.querySelectorAll('input[name="reconnect-mode"]');
+      eq(inputs.length, 3, 'three modes are offered');
+      eq(inputs.map((r) => r.value).join(','), 'usb,ble-mcsp,ble-live', 'only the real transports are offered');
+      assert(inputs.every((r) => r.disabled), 'unavailable modes are disabled');
+      const bodyHtml = ui.doc.getElementById('modalBody').innerHTML;
+      assert(/WebUSB is not available/.test(bodyHtml), 'the USB reason is shown');
+      assert(/Web Bluetooth is not available/.test(bodyHtml), 'the Bluetooth reason is shown');
+      cancelModal();
+      await p;
+
+      // Make all three available and switch to Live Data.
+      nav.usb = {};
+      nav.bluetooth = {};
+      sandbox.Bes3BleMcsp = { requestMcspDevice() {}, Bes3BleMcspTransport: function () {} };
+      sandbox.Bes3LiveDataBle = { requestLiveDataDevice() {}, Bes3LiveDataBleTransport: function () {} };
+      let used = null;
+      W.connect = async () => { used = 'usb'; };
+      W.connectBleMcsp = async () => { used = 'ble-mcsp'; };
+      W.connectLiveDataBle = async () => { used = 'ble-live'; };
+      p = ui.dom.dispatchAction('reconnect');
+      await sleep(0);
+      inputs = ui.doc.querySelectorAll('input[name="reconnect-mode"]');
+      assert(inputs.every((r) => !r.disabled), 'available modes are enabled');
+      const live = inputs.find((r) => r.value === 'ble-live');
+      inputs.forEach((r) => { r.checked = r === live; });
+      live.onchange();
+      const go = ui.doc.getElementById('reconnectGo');
+      assert(go && !go.disabled, 'Connect is enabled for an available mode');
+      go.onclick();
+      await p;
+      eq(used, 'ble-live', 'the selected transport is started once');
+
+      // Reopening preselects the last used mode.
+      p = ui.dom.dispatchAction('reconnect');
+      await sleep(0);
+      inputs = ui.doc.querySelectorAll('input[name="reconnect-mode"]');
+      const checked = inputs.filter((r) => r.checked).map((r) => r.value);
+      eq(checked.join(','), 'ble-live', 'the last used mode is preselected');
+      cancelModal();
+      await p;
+
+      // Two rapid connect clicks start one attempt only.
+      let attempts = 0;
+      W.connect = async () => { attempts++; await sleep(20); };
+      const a = ui.dom.dispatchAction('connect');
+      const b = ui.dom.dispatchAction('connect');
+      await Promise.all([a, b]);
+      eq(attempts, 1, 'concurrent connect clicks are ignored');
+    } finally {
+      nav.usb = saved.usb;
+      nav.bluetooth = saved.bt;
+      sandbox.Bes3BleMcsp = saved.mcsp;
+      sandbox.Bes3LiveDataBle = saved.live;
+      W.connectBleMcsp = saved.mcspConnect;
+      W.connectLiveDataBle = saved.liveConnect;
+      W.connect = saved.usbConnect;
+    }
+  });
+
+  await checkAsync('UI light: one click writes the light once and verifies it by read-back', async () => {
+    assert(ui, 'the UI sandbox loaded');
+    await openWriteTab();
+    // Make the simulated light installed and configured so the demo accepts a
+    // switch-on, then start from a readable OFF state.
+    await W.Writers.lightAvailable(true);
+    await W.Writers.lightConfiguration(2);
+    await W.Writers.lightSwitch(false);
+    ui.switchTab('write');
+    await sleep(0);
+    assert(/Turn light on/.test(writeView().innerHTML), 'the button reflects the off state');
+    resetFrameCounters();
+    const logStart = W.state.log.length;
+    const p = ui.dom.dispatchAction('lightToggle');
+    await finishRunModal();
+    await p;
+    const entries = W.state.log.slice(logStart).filter((e) => e && e.name === 'BIKE_LIGHT');
+    eq(entries.length, 1, 'exactly one light write');
+    assert(entries[0].applied, 'the light write was verified by read-back');
+    eq(mutations, 1, 'exactly one frame was sent');
+    assert(!/id="pendingChanges"/.test(writeView().innerHTML), 'the direct action stages nothing');
+    eq(W.state.values['DriveUnit.BIKE_LIGHT'].value, true, 'the light is on after the write');
+
+    // Unknown state: a read-only refresh is offered, never a blind write.
+    delete W.state.values['DriveUnit.BIKE_LIGHT'];
+    sandbox.Bes3WorkshopUI.render();
+    ui.switchTab('write');
+    assert(/data-act="lightRefresh"/.test(writeView().innerHTML), 'unknown state offers a refresh');
+    assert(!/data-act="lightToggle"/.test(writeView().innerHTML), 'unknown state offers no blind switch');
+    resetFrameCounters();
+    await ui.dom.dispatchAction('lightRefresh');
+    await sleep(0);
+    eq(mutations, 0, 'refresh is read-only');
+  });
+
+  await checkAsync('UI power ports: Apply sends both staged writes once and re-reads them', async () => {
+    assert(ui, 'the UI sandbox loaded');
+    await openWriteTab();
+    await ui.dom.dispatchAction('portRead');
+    // Demo seeds: LOW = 08 01, HIGH = 08 00. Both choices are real changes,
+    // so the same-value guard does not skip either step.
+    const low = ui.doc.getElementById('port_LOW');
+    low.value = 'disable'; low.onchange();
+    const high = ui.doc.getElementById('port_HIGH');
+    high.value = 'enable'; high.onchange();
+    await ui.dom.dispatchAction('portApply');
+    eq(ui.doc.querySelectorAll('[data-pending-key]').length, 2, 'both changed ports are staged');
+    const before = mutations;
+    const logStart = W.state.log.length;
+    const applyP = ui.dom.dispatchAction('pendingApply');
+    // Power ports are normal-tier: like the light/service cards they go straight
+    // to the run modal, with no typed register-name gate.
+    for (let i = 0; i < 100 && !/Applying 2 changes/.test(ui.doc.getElementById('modalTitle').textContent); i++) await sleep(1);
+    eq(ui.doc.getElementById('modalTitle').textContent, 'Applying 2 changes', 'no typed gate is opened for the power ports');
+    assert(!/id="batchTyped/.test(ui.doc.getElementById('modalBody').innerHTML), 'there is no high-impact confirmation input');
+    await finishRunModal();
+    await applyP;
+    const entries = W.state.log.slice(logStart).filter((e) => e && (e.name === 'LOW_POWER_PORT_ACTIVE' || e.name === 'HIGH_POWER_PORT_ACTIVE'));
+    eq(entries.length, 2, 'both port writes were logged');
+    assert(entries.every((e) => e.applied), 'both writes were confirmed by read-back: ' + entries.map((e) => e.name + '=' + e.applied).join(', '));
+    assert(mutations >= before + 2, 'both writes reached the simulated bike');
+    eq(W.state.values['DriveUnit.LOW_POWER_PORT_ACTIVE'].hex, '08 00', 'the low-power port reads back the written payload');
+    eq(W.state.values['DriveUnit.HIGH_POWER_PORT_ACTIVE'].hex, '08 01', 'the high-power port reads back the written payload');
+    assert(!/id="pendingChanges"/.test(writeView().innerHTML), 'applied rows leave the pending panel');
+  });
+
+  await checkAsync('UI power ports: restaging replaces only port rows, keeps other cards and guards unknown values', async () => {
+    assert(ui, 'the UI sandbox loaded');
+    await openWriteTab();
+    await ui.dom.dispatchAction('portRead');
+    await ui.dom.dispatchAction('svcApply');
+    let low = ui.doc.getElementById('port_LOW');
+    low.value = 'disable'; low.onchange();
+    let high = ui.doc.getElementById('port_HIGH');
+    high.value = 'enable'; high.onchange();
+    await ui.dom.dispatchAction('portApply');
+    let keys = Array.from(ui.doc.querySelectorAll('[data-pending-key]')).map((n) => n.dataset.pendingKey);
+    assert(keys.includes('RemoteControl.SERVICE_DUE'), 'the staged service row survives port staging');
+    assert(keys.includes('DriveUnit.LOW_POWER_PORT_ACTIVE') && keys.includes('DriveUnit.HIGH_POWER_PORT_ACTIVE'), 'both port rows are staged');
+    // Restage with LOW back to Unchanged: the stale LOW row must disappear and
+    // the service row (a different source) must not be discarded.
+    low = ui.doc.getElementById('port_LOW');
+    low.value = 'unchanged'; low.onchange();
+    await ui.dom.dispatchAction('portApply');
+    keys = Array.from(ui.doc.querySelectorAll('[data-pending-key]')).map((n) => n.dataset.pendingKey);
+    eq(keys.length, 2, 'one port row plus the service row remain');
+    assert(!keys.includes('DriveUnit.LOW_POWER_PORT_ACTIVE'), 'an unchanged port is never written');
+    assert(keys.includes('RemoteControl.SERVICE_DUE'), 'staging ports does not delete other cards\' rows');
+    // Both ports unchanged is reported as a no-op.
+    high = ui.doc.getElementById('port_HIGH');
+    high.value = 'unchanged'; high.onchange();
+    assert(/Nothing to write/.test(writeView().innerHTML), 'both unchanged is reported as no-op');
+    // An unread value is never guessed as off.
+    delete W.state.values['DriveUnit.HIGH_POWER_PORT_ACTIVE'];
+    sandbox.Bes3WorkshopUI.render();
+    ui.switchTab('write');
+    const h = ui.doc.getElementById('port_HIGH');
+    h.value = 'enable'; h.onchange();
+    assert(/Read High Power Port first/.test(writeView().innerHTML), 'an unread value blocks staging');
+  });
+
+  await checkAsync('UI Configure: every card is a closed dropdown that stays open across re-renders', async () => {
+    assert(ui, 'the UI sandbox loaded');
+    await openWriteTab();
+    const ids = ['lightCard', 'svcCard', 'portCard', 'idCard', 'advCard'];
+    let html = writeView().innerHTML;
+    for (const id of ids) {
+      const tag = new RegExp('<details[^>]*id="' + id + '"[^>]*>').exec(html);
+      assert(tag, id + ' is a details element');
+      assert(!/\bopen\b/.test(tag[0]), id + ' is closed by default');
+    }
+    // Opening a card (the native toggle) must survive the re-render caused by
+    // one of its own controls.
+    const lightCard = ui.doc.getElementById('lightCard');
+    assert(lightCard && typeof lightCard.ontoggle === 'function', 'the dropdown toggle is bound');
+    lightCard.open = true;
+    lightCard.ontoggle();
+    const avail = ui.doc.getElementById('lAvail');
+    avail.checked = !avail.checked;
+    avail.onchange();
+    html = writeView().innerHTML;
+    const openTag = new RegExp('<details[^>]*id="lightCard"[^>]*>').exec(html);
+    assert(openTag && /\bopen\b/.test(openTag[0]), 'the opened card stays open after its control re-renders');
+    // A session change collapses every card again and clears the port choice.
+    const low = ui.doc.getElementById('port_LOW');
+    low.value = 'disable'; low.onchange();
+    W.simulateConnectionLoss();
+    sandbox.Bes3WorkshopUI.render();
+    ui.switchTab('write');
+    html = writeView().innerHTML;
+    assert(/value="unchanged" selected/.test(html), 'the port choice is cleared on session change');
+    for (const id of ids) {
+      const tag = new RegExp('<details[^>]*id="' + id + '"[^>]*>').exec(html);
+      assert(tag && !/\bopen\b/.test(tag[0]), id + ' is closed again after a session change');
+    }
+  });
+
   await checkAsync('UI staging: Apply sends the visible batch in order and reads it back', async () => {
     assert(ui, 'the UI sandbox loaded');
     await openWriteTab();
-    // Present the demo light as on so the toggle stages a harmless "off" write.
-    W.state.values['DriveUnit.BIKE_LIGHT'] = { status: 'ok', value: true, display: 'on', hex: '08 01' };
     await ui.dom.dispatchAction('svcApply');
-    await stageLight();
+    await stageLab('DriveUnit.BIKE_LIGHT_CONFIGURATION', '08 03');
     assert(/Pending changes \(2\)/.test(writeView().innerHTML), 'both changes are staged');
     const before = mutations;
     const logStart = W.state.log.length;
@@ -4087,7 +4465,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
     assert(ui, 'the UI sandbox loaded');
     await openWriteTab();
     await ui.dom.dispatchAction('svcApply');
-    await stageLight();
+    await stageLab('DriveUnit.BIKE_LIGHT_CONFIGURATION', '08 03');
     const before = mutations;
     const logStart = W.state.log.length;
     dropReadAddr = W.util.addrOf('RemoteControl', 'SERVICE_DUE');
@@ -4175,6 +4553,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
       let calls = 0;
       const stub = {
         setFillColor() {}, setDrawColor() {}, setTextColor() {}, setFont() {}, setFontSize() {}, setLineWidth() {},
+        setLineCap() {}, setLineJoin() {},
         text() { calls++; }, rect() { calls++; }, roundedRect() { calls++; }, circle() { calls++; }, line() { calls++; },
       };
       eq(PRESENTATION.drawComponentGlyph(stub, key, 0, 0), true, 'glyph draws for ' + key);
@@ -4184,11 +4563,42 @@ check('source: the light theme, the modal focus and the re-read control (source 
     eq(PRESENTATION.drawComponentGlyph({}, 'Unknown', 0, 0), false, 'drawing an unknown component is a no-op');
   });
 
+  check('PDF battery glyphs: every metric has a distinct monochrome vector glyph', () => {
+    const expected = ['soc', 'volt', 'cyc', 'kwh', 'cold', 'hot', 'soh', 'remaining'];
+    eq(PRESENTATION.BATTERY_GLYPH_KEYS.slice().sort().join(','), expected.slice().sort().join(','), 'all eight battery metrics are covered');
+    const signatures = new Set();
+    for (const kind of expected) {
+      eq(PRESENTATION.hasBatteryGlyph(kind), true, 'glyph declared for ' + kind);
+      const shapes = [];
+      const stub = {
+        setFillColor() {}, setDrawColor() {}, setTextColor() {}, setFont() {}, setFontSize() {},
+        setLineWidth(w) { shapes.push('lw:' + w); },
+        setLineCap(v) { shapes.push('cap:' + v); }, setLineJoin(v) { shapes.push('join:' + v); },
+        rect(...a) { shapes.push('rect:' + a.join(',')); },
+        roundedRect(...a) { shapes.push('round:' + a.join(',')); },
+        circle(...a) { shapes.push('circle:' + a.join(',')); },
+        ellipse() { shapes.push('ellipse'); },
+        line(...a) { shapes.push('line:' + a.join(',')); },
+        text() {},
+      };
+      eq(PRESENTATION.drawBatteryGlyph(stub, kind, 0, 0, [0, 0, 0]), true, 'glyph draws for ' + kind);
+      assert(shapes.length > 1, kind + ' emitted shapes');
+      assert(shapes.indexOf('lw:0.5') !== -1, kind + ' uses the shared stroke width');
+      assert(shapes.indexOf('cap:round') !== -1, kind + ' uses rounded line caps');
+      assert(shapes.indexOf('join:round') !== -1, kind + ' uses rounded line joins');
+      assert(shapes.lastIndexOf('cap:butt') > shapes.lastIndexOf('cap:round'), kind + ' restores the default line cap');
+      signatures.add(shapes.join('|'));
+    }
+    eq(signatures.size, expected.length, 'every battery metric has a distinct glyph');
+    eq(PRESENTATION.hasBatteryGlyph('unknown'), false, 'an unknown metric has no glyph');
+    eq(PRESENTATION.drawBatteryGlyph({}, 'unknown', 0, 0), false, 'drawing an unknown metric is a no-op');
+  });
+
   await checkAsync('UI & PDF component photos: default OFF, pinned opt-in, missing fallback, and PDF without embedded module', async () => {
     assert(ui, 'the UI sandbox loaded');
     await ui.startDemo();
     resetFrameCounters();
-    ui.switchTab('read');
+    uiHarness.switchTab('read');
 
     const P = sandbox.Bes3PartImages;
     assert(P && typeof P.resolve === 'function', 'Bes3PartImages exposes resolve');
@@ -4202,7 +4612,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
     P.setRemoteOptIn(false);
     P.setMissingUpstreamFiles([]);
     sandbox.Bes3WorkshopUI.render();
-    const readHtmlOff = ui.doc.getElementById('view-read').innerHTML;
+    const readHtmlOff = uiHarness.doc.getElementById('view-read').innerHTML;
     assert(!/https?:\/\/cdn\.jsdelivr\.net/i.test(readHtmlOff), 'default OFF renders no external CDN URL');
     assert(!/<img\b/i.test(readHtmlOff), 'default OFF renders no <img> tags when local photos are absent');
     assert(/<svg\b/i.test(readHtmlOff), 'default OFF renders generic SVG icons');
@@ -4223,14 +4633,14 @@ check('source: the light theme, the modal focus and the re-read control (source 
     await sleep(0);
     eq(P.isRemoteOptIn(), true, 'the button enables remote photo opt-in in memory');
     eq(ui.doc.getElementById('btnPhotos').dataset.state, 'loaded', 'the header button shows the loaded state');
-    const readHtmlOn = ui.doc.getElementById('view-read').innerHTML;
+    const readHtmlOn = uiHarness.doc.getElementById('view-read').innerHTML;
     assert(readHtmlOn.includes(P.UPSTREAM_IMAGE_BASE + 'ic_bdu374_performance_line_cx.webp'), 'opt-in ON renders pinned upstream URL');
     // Loaded once -> every tab uses the photos (the opt-in is global state).
     ui.switchTab('report');
     await sleep(0);
     assert(!ui.doc.getElementById('view-report').innerHTML.includes('photoBtn-'), 'the report tab has no second photo control');
     eq(ui.doc.getElementById('btnPhotos').dataset.state, 'loaded', 'the header button keeps its state in every tab');
-    ui.switchTab('read');
+    uiHarness.switchTab('read');
     await sleep(0);
 
     // 3. Missing local and remote -> falls back to generic icon (null).
@@ -4238,7 +4648,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
     eq(P.resolve('DriveUnit', 'BDU3740'), null, 'file in MISSING_UPSTREAM_FILES falls back to icon');
     eq(P.resolve('DriveUnit', 'UNKNOWN_CODE_999'), null, 'unmapped code falls back to icon');
     sandbox.Bes3WorkshopUI.render();
-    const readHtmlMissing = ui.doc.getElementById('view-read').innerHTML;
+    const readHtmlMissing = uiHarness.doc.getElementById('view-read').innerHTML;
     assert(!readHtmlMissing.includes('ic_bdu374_performance_line_cx.webp'), 'missing upstream file is omitted from <img>');
 
     // 4. Local available -> local path wins first.
@@ -4673,6 +5083,262 @@ await checkAsync('Web Bluetooth transports: Live Data BLE decoder/stream and MCS
   eq(received[4], 0x8e, 'incoming destination high byte rewritten to 0x8e (0x80 success MSB preserved)');
   eq(received[5], 0x10, 'incoming destination low byte rewritten to 0x10');
   await bleTransport.close();
+});
+
+await checkAsync('Web Bluetooth MCSP: streaming reassembly, 12-bit wrapping and the MobileApp responder', async () => {
+  const bleWindow = { __bes3Now: () => Date.now(), __bes3Sleep: () => Promise.resolve() };
+  new Function('window', 'navigator', readFileSync(path.join(repo, 'web', 'transport-webble-mcsp.js'), 'utf8'))(bleWindow, { bluetooth: {} });
+  const McspBle = bleWindow.Bes3BleMcsp;
+  assert(McspBle && McspBle.parseSegmentationStream, 'the transport exposes the streaming parser');
+  const sent = [];
+  const makeTransport = () => {
+    const t = new McspBle.Bes3BleMcspTransport({ name: 'fake', id: 'fake-2' });
+    t.txChar = { async writeValueWithoutResponse(frame) { sent.push(new Uint8Array(frame)); } };
+    return t;
+  };
+  const notify = (t, bytes) => t._handleNotification(Uint8Array.from(bytes));
+  const lastSent = () => McspBle.decodeSegmentationFrames(sent[sent.length - 1])[0];
+
+  // T1: a header split across notifications
+  const t1 = makeTransport();
+  notify(t1, [0x30, 0x05, 0x0e]);
+  notify(t1, [0x10, 0x18, 0x00, 0x01]);
+  const f1 = await t1.readNextFrame(1, 0);
+  assert(f1 && f1[0] === 0x30 && f1[1] === 0x05, 'T1: split header reassembles');
+  eq(Array.from(f1.slice(2)).join(','), '14,16,24,0,1', 'T1: payload intact');
+
+  // T2: a payload split across notifications
+  const t2 = makeTransport();
+  notify(t2, [0x30, 0x05, 0x0e, 0x10]);
+  notify(t2, [0x18, 0x00, 0x01]);
+  const f2 = await t2.readNextFrame(1, 0);
+  eq(f2 && f2.length, 7, 'T2: split payload reassembles');
+
+  // T3: two complete frames in one notification
+  const t3 = makeTransport();
+  const a = McspBle.encodeSegmentationFrame(1, true, Uint8Array.from([0x0e, 0x10, 0x18, 0x00, 0x01]));
+  const b = McspBle.encodeSegmentationFrame(1, true, Uint8Array.from([0x0e, 0x10, 0x18, 0x01, 0x01]));
+  notify(t3, [...a, ...b]);
+  const f3a = await t3.readNextFrame(1, 0);
+  const f3b = await t3.readNextFrame(1, 0);
+  assert(f3a && f3b, 'T3: both frames are emitted');
+
+  // T4: channel-1 fragments joined
+  const t4 = makeTransport();
+  notify(t4, McspBle.encodeSegmentationFrame(1, false, Uint8Array.from([0x0e, 0x10, 0x18])));
+  notify(t4, McspBle.encodeSegmentationFrame(1, true, Uint8Array.from([0x00, 0x01])));
+  const f4 = await t4.readNextFrame(1, 0);
+  eq(f4 && f4[1], 5, 'T4: fragments join into one message');
+
+  // T5: command and message fragments interleave independently
+  const t5 = makeTransport();
+  notify(t5, McspBle.encodeSegmentationFrame(0, true, Uint8Array.from([0x01, 0x03])));
+  notify(t5, McspBle.encodeSegmentationFrame(1, false, Uint8Array.from([0x0e, 0x10])));
+  notify(t5, McspBle.encodeSegmentationFrame(1, true, Uint8Array.from([0x18, 0x00, 0x01])));
+  eq(t5._commandsSeen.length, 1, 'T5: the command frame is kept');
+  assert(await t5.readNextFrame(1, 0), 'T5: the message frame is kept');
+
+  // T6: the channel accumulator is capped and the transport recovers
+  const t6 = makeTransport();
+  for (let i = 0; i < 5; i++) notify(t6, McspBle.encodeSegmentationFrame(1, false, new Uint8Array(4095)));
+  eq(t6._channelAccumulators.size, 0, 'T6: an oversized fragment chain is dropped');
+  notify(t6, McspBle.encodeSegmentationFrame(1, true, Uint8Array.from([0x0e, 0x10, 0x18, 0x00, 0x01])));
+  assert(await t6.readNextFrame(1, 0), 'T6: the transport recovers after a drop');
+
+  // T7: close() clears partial state
+  const t7 = makeTransport();
+  notify(t7, McspBle.encodeSegmentationFrame(1, false, Uint8Array.from([0x0e])));
+  await t7.close();
+  eq(t7._rxStreamBuffer.length, 0, 'T7: the stream buffer is cleared');
+  eq(t7._channelAccumulators.size, 0, 'T7: accumulators are cleared');
+
+  // T8: a 300-byte message carries a 12-bit segmentation length but is not
+  // queued: the shared parser reads a single-octet length, so delivering it
+  // would silently truncate the payload.
+  const t8 = makeTransport();
+  const body300 = new Uint8Array(300);
+  body300[0] = 0x18; body300[1] = 0x00; body300[2] = 0x8e; body300[3] = 0x10; body300[4] = 0x11;
+  const seg300 = McspBle.encodeSegmentationFrame(1, true, body300);
+  assert(seg300[0] === 0x31 && seg300[1] === 0x2c, 'T8: the segmentation header carries the 12-bit length (0x31 0x2c)');
+  notify(t8, seg300);
+  eq(await t8.readNextFrame(1, 0), null, 'T8: a >255-byte message is not queued for the single-octet parser');
+
+  // T9: a completed message above the 4095-byte frame limit is dropped cleanly
+  const t9b = makeTransport();
+  notify(t9b, McspBle.encodeSegmentationFrame(1, false, new Uint8Array(2048)));
+  notify(t9b, McspBle.encodeSegmentationFrame(1, true, new Uint8Array(2048)));
+  eq(await t9b.readNextFrame(1, 0), null, 'T9: a 4096-byte message is dropped without throwing');
+
+  // R1-R5: reads answer from 0x41xx with explicit statuses when refused
+  const t9 = makeTransport();
+  // TX is serialized through a promise chain, so give the queued response a
+  // turn to run before inspecting the captured frames.
+  const request = async (body) => {
+    notify(t9, McspBle.encodeSegmentationFrame(1, true, Uint8Array.from(body)));
+    await sleep(0);
+  };
+  sent.length = 0;
+  await request([0x20, 0x00, 0x40, 0xaa, 0x03]);
+  eq(lastSent().payload.join(','), '65,170,160,0,19,24,1', 'R1: static feature properties answer');
+  sent.length = 0;
+  await request([0x20, 0x00, 0x40, 0x81, 0x03]);
+  eq(lastSent().payload.join(','), '65,129,160,0,19,8,0', 'R2: UI priority answer');
+  sent.length = 0;
+  await request([0x20, 0x00, 0x40, 0x9d, 0x03]);
+  eq(lastSent().payload.join(','), '65,157,160,0,19,10,4,0,1,2,3', 'R3: issue types answer');
+  sent.length = 0;
+  await request([0x20, 0x00, 0x40, 0x85, 0x03]);
+  eq(lastSent().payload.length, 5, 'R4: a known-empty read has no payload');
+  sent.length = 0;
+  await request([0x20, 0x00, 0x40, 0x77, 0x03]);
+  const r5 = lastSent().payload;
+  eq(r5[2], 0x20, 'R5: a failed response clears the success MSB');
+  eq(r5[5], 0x04, 'R5: an unknown read is UNSUPPORTED');
+
+  // R6-R8: startup-stage writes are validated before they are stored
+  sent.length = 0;
+  await request([0x20, 0x00, 0x40, 0xa9, 0x24, 0x08, 0x09]);
+  eq(t9.startupStage, 9, 'R6: a valid stage is stored');
+  eq(lastSent().payload[4], 0x34, 'R6: WRITE_RESPONSE is sent');
+  await request([0x20, 0x00, 0x40, 0xa9, 0x24, 0x08, 0x0a]);
+  eq(t9.startupStage, 9, 'R7: an invalid stage does not change the stored value');
+  eq(lastSent().payload[5], 0x08, 'R7: an invalid stage is MALFORMED');
+  sent.length = 0;
+  await request([0x20, 0x00, 0x40, 0xa9, 0x24, 0x08]);
+  eq(lastSent().payload[5], 0x08, 'R8: a truncated stage is MALFORMED');
+
+  // R9-R10: RPC and SUBSCRIBE
+  sent.length = 0;
+  await request([0x20, 0x00, 0x40, 0x9b, 0x43]);
+  eq(lastSent().payload.join(','), '65,155,160,0,83,34,0', 'R9: the altitude graph RPC is answered');
+  sent.length = 0;
+  await request([0x20, 0x00, 0x40, 0x85, 0x66]);
+  eq(lastSent().payload[4], 0x76, 'R10: SUBSCRIBE_RESPONSE echoes the sequence');
+
+  // R11-R12: responses and notifications are never answered
+  sent.length = 0;
+  await request([0x20, 0x00, 0x40, 0xaa, 0x13]);
+  eq(sent.length, 0, 'R11: a READ_RESPONSE addressed to 0x40xx is not answered');
+  await request([0xa0, 0x00, 0x40, 0xaa, 0x03]);
+  eq(sent.length, 0, 'R12: a notify frame is not answered');
+});
+
+await checkAsync('Web Bluetooth MCSP: GATT writes are serialized, failures do not block the queue and close drops queued work', async () => {
+  const bleWindow = { __bes3Now: () => Date.now(), __bes3Sleep: () => Promise.resolve() };
+  new Function('window', 'navigator', readFileSync(path.join(repo, 'web', 'transport-webble-mcsp.js'), 'utf8'))(bleWindow, { bluetooth: {} });
+  const McspBle = bleWindow.Bes3BleMcsp;
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let failOnce = false;
+  const sent = [];
+  const make = () => {
+    const t = new McspBle.Bes3BleMcspTransport({ name: 'fake', id: 'gatt-x' });
+    t.txChar = {
+      async writeValueWithoutResponse(frame) {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        try {
+          await new Promise((r) => setTimeout(r, 2));
+          if (failOnce) { failOnce = false; throw new Error('GATT operation already in progress'); }
+          sent.push(new Uint8Array(frame));
+        } finally {
+          inFlight--;
+        }
+      },
+    };
+    t._resetStreamState();
+    return t;
+  };
+
+  // A normal write plus two automatic peer responses were the paths that
+  // overlapped in the field log.
+  const t = make();
+  const w = t._writeFrame(1, Uint8Array.from([0x0e, 0x10, 0x18, 0x00, 0x01]));
+  t._handleNotification(McspBle.encodeSegmentationFrame(1, true, Uint8Array.from([0x20, 0x00, 0x40, 0xaa, 0x03])));
+  t._handleNotification(McspBle.encodeSegmentationFrame(1, true, Uint8Array.from([0x20, 0x00, 0x40, 0x81, 0x03])));
+  await w;
+  await new Promise((r) => setTimeout(r, 20));
+  eq(maxInFlight, 1, 'a register write and two peer responses never overlap');
+  assert(sent.length >= 3, 'the write and both peer responses were sent');
+
+  // One rejected operation reaches its caller but leaves the queue usable.
+  failOnce = true;
+  const err = await capture(() => t._writeFrame(1, Uint8Array.from([0x0e, 0x10, 0x18, 0x02, 0x01])));
+  assert(err && /GATT operation already in progress/.test(err.message), 'the failure reaches the caller');
+  await t._writeFrame(1, Uint8Array.from([0x0e, 0x10, 0x18, 0x03, 0x01]));
+  eq(sent.length, 4, 'the queue continues after a failure');
+  eq(maxInFlight, 1, 'still no overlap after a failure');
+
+  // close() rejects work queued before it and ignores late notifications.
+  let closedErr = null;
+  const queued = t._writeFrame(1, Uint8Array.from([0x0e, 0x10, 0x18, 0x04, 0x01])).catch((e) => { closedErr = e; });
+  await t.close();
+  await queued;
+  assert(closedErr, 'work queued before close is rejected');
+  t._handleNotification(McspBle.encodeSegmentationFrame(1, true, Uint8Array.from([0x20, 0x00, 0x40, 0xaa, 0x03])));
+  eq(t._readQueue.length, 0, 'late notifications are ignored after close');
+  eq(sent.length, 4, 'no write is sent from a closed session');
+});
+
+await checkAsync('Live Data BLE: early frames are ingested, zero is valid, disconnect marks data stale and reconnect resets listeners', async () => {
+  const nav = sandbox.navigator;
+  const savedBt = nav.bluetooth;
+  const savedLive = sandbox.Bes3LiveDataBle;
+  let instance = null;
+  let addCount = 0;
+  let removeCount = 0;
+  const device = {
+    name: 'Fake Live Data',
+    addEventListener(evt, fn) { if (evt === 'gattserverdisconnected') { addCount++; this._onDisconnect = fn; } },
+    removeEventListener(evt, fn) { if (evt === 'gattserverdisconnected' && this._onDisconnect === fn) { removeCount++; this._onDisconnect = null; } },
+    gatt: { disconnect() {} },
+  };
+  class FakeLive {
+    constructor() { instance = this; this.characteristic = {}; this._cb = null; this._closed = false; }
+    async connect() {}
+    async readOnce() { return { speedKmh: 0, cadenceRpm: 0, riderPowerW: 0, batterySocPercent: 55 }; }
+    async subscribe(cb) { this._cb = cb; cb({ speedKmh: 12.3, cadenceRpm: 80 }); }
+    disconnect() { this._closed = true; this._cb = null; }
+    async close() { this.disconnect(); }
+    emit(partial) { if (this._cb && !this._closed) this._cb(partial); }
+  }
+  try {
+    nav.bluetooth = {};
+    sandbox.Bes3LiveDataBle = { requestLiveDataDevice: async () => device, Bes3LiveDataBleTransport: FakeLive };
+    await W.connectLiveDataBle();
+    eq(W.state.bleLive.active, true, 'the Live Data session is active');
+    eq(W.state.bleLive.values.batterySocPercent, 55, 'the initial read is merged');
+    eq(W.state.bleLive.values.speedKmh, 12.3, 'a frame delivered while subscribing is not dropped');
+    eq(W.state.bleLive.values.cadenceRpm, 80, 'cadence is ingested');
+    eq(W.canMutate, false, 'Live Data is read-only');
+    eq(W.isLive, false, 'Live Data is not a writable transport');
+    // Zero is a real value, not missing data.
+    instance.emit({ speedKmh: 0, riderPowerW: 0 });
+    eq(W.state.bleLive.values.speedKmh, 0, 'zero speed is kept');
+    eq(W.state.bleLive.values.riderPowerW, 0, 'zero rider power is kept');
+    assert(W.state.bleLive.lastAt instanceof Date, 'the reception time is tracked');
+    uiHarness.switchTab('read');
+    await sleep(0);
+    assert(/Bluetooth Live Data telemetry/.test(uiHarness.doc.getElementById('view-read').innerHTML), 'the telemetry card is rendered');
+    assert(/0\.0 km\/h/.test(uiHarness.doc.getElementById('view-read').innerHTML), 'zero speed is displayed');
+    // A remote disconnect keeps the last values but marks them stale.
+    device._onDisconnect();
+    eq(W.state.bleLive.active, false, 'the session is marked inactive');
+    eq(W.state.bleLive.values.speedKmh, 0, 'the last value is preserved');
+    sandbox.Bes3WorkshopUI.render();
+    assert(/Stale/.test(uiHarness.doc.getElementById('view-read').innerHTML), 'the UI marks the values stale');
+    // An explicit user disconnect keeps the last snapshot marked stale.
+    await W.disconnect({ keepLiveStale: true });
+    assert(W.state.bleLive && W.state.bleLive.active === false, 'explicit disconnect keeps a stale snapshot');
+    eq(W.state.bleLive.values.speedKmh, 0, 'the stale snapshot keeps the last value');
+    eq(addCount, removeCount, 'every connect listener is removed');
+    // A transport switch still clears it.
+    await W.disconnect();
+    eq(W.state.bleLive, null, 'a transport switch clears the Live Data session');
+  } finally {
+    nav.bluetooth = savedBt;
+    sandbox.Bes3LiveDataBle = savedLive;
+  }
 });
 
 // The safety document presents the suite count as evidence. It must quote the

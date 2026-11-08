@@ -10,7 +10,7 @@ tier the Write Lab assigns to it.
 - Readable: **802**
 - Not readable (cannot be read back): **93** (2 writable, 91 read-only)
 - Tiers: **1 blocked**, **861 registry-readonly**,
-  **24 high-impact**, **9 normal**
+  **22 high-impact**, **11 normal**
 
 Tier precedence: `blocked` (not in the registry, or `DriveUnit.BIKE_LIGHT_POWER`,
 which has its own control) → `registry-readonly` (`writable !== true`) →
@@ -900,7 +900,7 @@ The registry marks these read-only. They are offered under the same typed `Compo
 | RemoteControl | X_ABS_CURRENT_ABS_MODE | 0x2319 | uint | no | yes | Currently active ABS mode | Read-only in the registry. The bike will usually refuse this write. |
 | RemoteControl | X_ABS_DYNAMIC_FEATURE_PROPERTIES | 0x2316 | submessage | no | yes | ABS runtime capability flags | Read-only in the registry. The bike will usually refuse this write. |
 
-## high-impact (24)
+## high-impact (22)
 
 Writable, but requires typing the full `Component.NAME` and a `highImpactConfirmed` approval grant.
 
@@ -917,8 +917,6 @@ Writable, but requires typing the full `Component.NAME` and a `highImpactConfirm
 | Battery2 | SO_C_LOWER_LIMIT | 0x2a2 | unknown | yes | yes | So C Lower Limit | High-impact register. Type the register name to confirm. |
 | Battery2 | SO_C_UPPER_LIMIT | 0x2a3 | unknown | yes | yes | So C Upper Limit | High-impact register. Type the register name to confirm. |
 | DriveUnit | BATTERY_KEY_LOCK_NUMBER | 0x1833 | unknown | yes | yes | Battery Key Lock Number | High-impact register. Type the register name to confirm. |
-| DriveUnit | HIGH_POWER_PORT_ACTIVE | 0x1832 | unknown | yes | yes | High Power Port Active | High-impact register. Type the register name to confirm. |
-| DriveUnit | LOW_POWER_PORT_ACTIVE | 0x1831 | unknown | yes | yes | Low Power Port Active | High-impact register. Type the register name to confirm. |
 | DriveUnit | MAXIMUM_ASSISTANCE_SPEED_IBD | 0x1842 | normFactor | yes | yes | Maximum Assistance Speed (IBD) | High-impact register. Type the register name to confirm. |
 | DriveUnit | MULTI_PURPOSE_PORT_STATUS | 0x187c | unknown | yes | yes | Multi Purpose Port Status | High-impact register. Type the register name to confirm. |
 | DriveUnit | REAR_WHEEL_CIRCUMFERENCE_USER | 0x1829 | normFactor | yes | yes | Rear Wheel Circumference (User) | High-impact register. Type the register name to confirm. |
@@ -931,7 +929,7 @@ Writable, but requires typing the full `Component.NAME` and a `highImpactConfirm
 | RemoteControl | BUTTON_EVENTS_ENABLED | 0x2044 | unknown | yes | yes | Button Events Enabled | High-impact register. Type the register name to confirm. |
 | RemoteControl | LCD_TEST_MODE | 0x20af | unknown | yes | yes | Lcd Test Mode | High-impact register. Type the register name to confirm. |
 
-## normal (9)
+## normal (11)
 
 Writable without the extra high-impact name confirmation. Every write is still individually approved.
 
@@ -940,6 +938,8 @@ Writable without the extra high-impact name confirmation. Every write is still i
 | DriveUnit | BIKE_LIGHT | 0x181c | bool | yes | yes | Bike Light |  |
 | DriveUnit | BIKE_LIGHT_AVAILABLE | 0x1820 | bool | yes | yes | Bike Light Available |  |
 | DriveUnit | BIKE_LIGHT_CONFIGURATION | 0x1821 | unknown | yes | yes | Bike Light Configuration |  |
+| DriveUnit | HIGH_POWER_PORT_ACTIVE | 0x1832 | unknown | yes | yes | High Power Port Active |  |
+| DriveUnit | LOW_POWER_PORT_ACTIVE | 0x1831 | unknown | yes | yes | Low Power Port Active |  |
 | RemoteControl | LANGUAGE | 0x2181 | string | yes | yes | Language |  |
 | RemoteControl | LED_COLORS | 0x20a2 | uint32List | yes | yes | LED Colors |  |
 | RemoteControl | SERVICE_DUE | 0x2185 | serviceDue | yes | yes | Service Due |  |

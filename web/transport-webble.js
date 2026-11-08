@@ -110,9 +110,11 @@
       this.characteristic = null;
       this._onData = null;
       this._handleNotify = null;
+      this._closed = false;
     }
 
     async connect() {
+      this._closed = false;
       const log = window.Bes3DebugLog && window.Bes3DebugLog.log;
       log && log('ble-live', 'device: ' + (this.device.name || '(unnamed)') + ' id=' + (this.device.id || ''));
       const backoffsMs = [0, 400, 900, 1600];
@@ -145,6 +147,7 @@
     }
 
     disconnect() {
+      this._closed = true;
       try {
         if (this.characteristic && this._handleNotify && this.characteristic.removeEventListener) {
           this.characteristic.removeEventListener('characteristicvaluechanged', this._handleNotify);
@@ -153,6 +156,9 @@
           this.device.gatt.disconnect();
         }
       } catch (_) { /* ignore */ }
+      this.characteristic = null;
+      this._handleNotify = null;
+      this._onData = null;
     }
 
     async close() {
@@ -160,6 +166,7 @@
     }
 
     async readOnce() {
+      if (this._closed || !this.characteristic) throw new Error('Transport is not connected');
       const log = window.Bes3DebugLog && window.Bes3DebugLog.log;
       log && log('ble-live', 'readValue()…');
       const value = await this.characteristic.readValue();
@@ -171,9 +178,11 @@
     }
 
     async subscribe(callback) {
+      if (this._closed || !this.characteristic) throw new Error('Transport is not connected');
       const log = window.Bes3DebugLog && window.Bes3DebugLog.log;
       this._onData = callback;
       this._handleNotify = (event) => {
+        if (this._closed) return;
         const val = event && event.target && event.target.value;
         if (!val || !val.buffer) return;
         const bytes = new Uint8Array(val.buffer, val.byteOffset || 0, val.byteLength !== undefined ? val.byteLength : val.buffer.byteLength);

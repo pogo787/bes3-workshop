@@ -56,8 +56,10 @@ section.
 - `docs/internal/review-pack-1.md` / `docs/internal/review-pack-2.md`
   — verbatim copies of the write-path source at the reviewed revision.
 - [`diagnostics.md`](diagnostics.md) — fault-code catalog extraction details.
-- [`investigation-light-power.md`](investigation-light-power.md) — what is known
-  about the bike-light power register (0x1822) and why the writer stays bounded.
+- [`investigation-light-power.md`](investigation-light-power.md) — the evidence
+  boundary for the bike-light power register (0x1822): what the Workshop's own
+  encoding does, what the tested read-backs establish, and what remains
+  unverified.
 - [`investigation-assist-modes.md`](investigation-assist-modes.md) — why the
   statistics of deactivated assist modes cannot be read.
 - [`mini-remote-detection.md`](mini-remote-detection.md) — why the upstream

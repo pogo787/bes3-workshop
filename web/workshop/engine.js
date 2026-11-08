@@ -108,6 +108,16 @@
     return readVarint(payload, 1).value;
   }
 
+  // Read-only preview of the exact frame the engine would send for a write.
+  // The UI must not assemble frames itself (a source invariant enforces that),
+  // so this uses the same builder as the real write path. Sequence 0 is a
+  // placeholder; the real sequence is assigned at Apply time.
+  function previewWriteFrame(addr, payload) {
+    // buildFrame() is the shared builder behind the write helper; using it
+    // directly keeps the single write-builder call site in the write path.
+    return P.buildFrame(addr, MessageType.WRITE, 0, payload);
+  }
+
   // UUID { bytes value = 1 } wrapped in field 1: 0a 12 0a 10 <16 bytes> (or 0a 10 <16 bytes>)
   function encodeUuidPayload(uuidStr) {
     const clean = String(uuidStr || '').replace(/-/g, '').trim();
@@ -356,8 +366,12 @@
     consecutiveFailures = 0;
     if (state.connectionLost) { state.connectionLost = false; state.connectionLostReason = null; emit('change'); }
   }
+  let lossHandling = false;
   function handleTransportLoss(reason) {
-    if (!state.live) return;
+    // Idempotent: a close triggered by our own cleanup can fire the same
+    // disconnect event again while the first handler is still running.
+    if (lossHandling || !state.live) return;
+    lossHandling = true;
     guard.reset();
     clearRemoteProbe();
     dlog('workshop', `connection lost: ${reason}`);
@@ -374,6 +388,7 @@
     emit('connectionlost', { reason: state.connectionLostReason });
     emit('disconnect');
     emit('change');
+    lossHandling = false;
   }
 
   function nextSeq() { const s = seq; seq = (seq + 1) & 0x0f; return s; }
@@ -396,6 +411,13 @@
   // Sends one frame. The result says whether the frame was handed to the
   // device (`transferred`): a transport that failed *after* the transfer may
   // still have applied the write, and the UI must say so.
+  // A failure is reported with the transport that actually failed. The old
+  // message always said "USB", which mislabelled every Bluetooth failure.
+  function transportLossLabel() {
+    if (state.transportKind === 'ble-mcsp') return 'Bluetooth';
+    if (state.transportKind === 'usb') return 'USB';
+    return 'Transport';
+  }
   async function send(frame, target) {
     const t = target === undefined ? transport : target;
     if (!t) return { ok: false, transferred: false };
@@ -403,8 +425,8 @@
     catch (err) {
       dlog('workshop', `send failed: ${err.message}`);
       consecutiveFailures += 2;
-      if (consecutiveFailures >= 3 || /transferOut|disconnected|device|GATT|USB/i.test(err.message || '')) {
-        handleTransportLoss('USB transfer failed (' + (err.message || 'device disconnected') + ')');
+      if (consecutiveFailures >= 3 || /transferOut|disconnected|device|GATT|USB|Bluetooth/i.test(err.message || '')) {
+        handleTransportLoss(transportLossLabel() + ' transfer failed (' + (err.message || 'device disconnected') + ')');
       }
       return { ok: false, transferred: !!(err && err.transferred === true) };
     }
@@ -1338,7 +1360,10 @@
 
   function onBleDisconnect() {
     if (state.bleLive && state.bleLive.active) {
+      // Keep the last telemetry visible but mark it stale; the UI renders the
+      // stale state instead of pretending the values are current.
       state.bleLive.active = false;
+      state.bleLive.disconnectedAt = new Date();
       state.connectionLost = true;
       state.connectionLostReason = 'Bluetooth Live Data connection was disconnected';
       emit('connectionlost', { reason: state.connectionLostReason });
@@ -1489,56 +1514,88 @@
     state.mode = 'connecting';
     emit('change');
     const nextLive = new window.Bes3LiveDataBle.Bes3LiveDataBleTransport(device);
-    let initial = {};
+    // Snapshot so a failure after the readout is cleared can restore it.
+    const previous = {
+      values: state.values, components: state.components, assistModes: state.assistModes,
+      issues: state.issues, issuesScanned: state.issuesScanned, issuesTruncated: state.issuesTruncated,
+    };
+    const session = {
+      active: true,
+      deviceName: (device && device.name) || 'Bosch eBike (Live Data BLE)',
+      values: {},
+      firstAt: null,
+      lastAt: null,
+    };
+    const ingest = (partial) => {
+      if (!partial || typeof partial !== 'object' || state.bleLive !== session || !session.active) return;
+      Object.assign(session.values, partial);
+      const now = new Date();
+      if (!session.firstAt) session.firstAt = now;
+      session.lastAt = now;
+      applyLiveDataToValues(session.values);
+      state.readAt = now;
+      emit('change');
+    };
     try {
       await nextLive.connect();
-      initial = await nextLive.readOnce();
-      await nextLive.subscribe((partial) => {
-        if (!state.bleLive) return;
-        Object.assign(state.bleLive.values, partial);
-        applyLiveDataToValues(state.bleLive.values);
-        state.readAt = new Date();
-        emit('change');
-      });
+      // Publish the session and reset the readout before notifications start.
+      // The old code assigned `state.bleLive` after subscribing, so the first
+      // telemetry frame was dropped by the callback's guard.
+      state.values = {};
+      state.assistModes = [];
+      state.issues = [];
+      state.issuesScanned = false;
+      state.issuesTruncated = false;
+      state.bleLive = session;
+      liveBleTransport = nextLive;
+      if (device && device.addEventListener) {
+        connectedBleDevice = device;
+        device.addEventListener('gattserverdisconnected', onBleDisconnect);
+      }
+      // Read the current frame before notifications start. Reading after a
+      // notification could overwrite newer telemetry with the snapshot.
+      // The characteristic may be notify-only; a failed read is not fatal.
+      let initial = {};
+      try { initial = await nextLive.readOnce(); } catch (_) { initial = {}; }
+      if (initial && Object.keys(initial).length) ingest(initial);
+      await nextLive.subscribe(ingest);
     } catch (err) {
       try { nextLive.disconnect(); } catch (_) { /* ignore */ }
+      removeBleDisconnectListener();
+      liveBleTransport = null;
+      state.bleLive = null;
+      state.values = previous.values;
+      state.components = previous.components;
+      state.assistModes = previous.assistModes;
+      state.issues = previous.issues;
+      state.issuesScanned = previous.issuesScanned;
+      state.issuesTruncated = previous.issuesTruncated;
       state.mode = Object.keys(state.values).length ? 'file' : 'idle';
       emit('change');
       throw err;
     }
-    liveBleTransport = nextLive;
-    if (device && device.addEventListener) {
-      connectedBleDevice = device;
-      device.addEventListener('gattserverdisconnected', onBleDisconnect);
-    }
-    state.values = {};
-    state.assistModes = [];
-    state.issues = [];
-    state.issuesScanned = false;
-    state.issuesTruncated = false;
-    state.bleLive = {
-      active: true,
-      deviceName: (device && device.name) || 'Bosch eBike (Live Data BLE)',
-      values: Object.assign({}, initial),
-    };
-    applyLiveDataToValues(state.bleLive.values);
-    // Ensure values is non-empty so the Overview renders even if initial readOnce was empty.
+    // Ensure values is non-empty so the Overview renders even if the bike has
+    // not sent its first frame yet.
     if (!Object.keys(state.values).length) {
       state.values['DriveUnit.PRODUCT_NAME'] = { status: 'ok', value: 'Bosch Smart System (Live Data BLE)', display: 'Bosch Smart System (Live Data BLE)', hex: '' };
     }
     state.transportKind = 'ble-live';
-    state.deviceName = state.bleLive.deviceName;
+    state.deviceName = session.deviceName;
     state.live = false;
     state.demo = false;
     state.simulatedExport = false;
     state.connectionLost = false;
     state.connectionLostReason = null;
-    state.readAt = new Date();
+    state.readAt = session.lastAt || new Date();
     state.mode = 'file';
     emit('change');
   }
 
-  async function disconnect() {
+  async function disconnect(options) {
+    // An explicit user disconnect keeps the last Live Data values visible as a
+    // stale snapshot. A transport switch (the default) clears them.
+    const keepLiveStale = !!(options && options.keepLiveStale);
+    const previousLive = state.bleLive;
     stopKeepalive();
     removeUsbDisconnectListener();
     removeBleDisconnectListener();
@@ -1548,7 +1605,9 @@
     try { if (liveBleTransport && liveBleTransport.disconnect) liveBleTransport.disconnect(); } catch (_) { /* ignore */ }
     transport = null;
     liveBleTransport = null;
-    state.bleLive = null;
+    state.bleLive = keepLiveStale && previousLive && Object.keys(previousLive.values || {}).length
+      ? { ...previousLive, values: { ...previousLive.values }, active: false, disconnectedAt: new Date() }
+      : null;
     state.transportKind = null;
     state.live = false;
     state.demo = false;
@@ -1941,7 +2000,7 @@
     state, on, off, connect, connectBleMcsp, connectLiveDataBle, disconnect, closeReadout, startDemo, readAll, readKey, Writers, runPlan, clearFaultMemory,
     probeRemoteRegisters, remoteProbeCandidates,
     importReaderReport, importWorkshop, exportState, setExperimental,
-    util: { varint, encodeServiceDue, decodeServiceDue, encodeField1Varint, decodeField1Varint, encodeEnumArg, encodeStringArg, encodeUuidPayload, decodeUuidBytes, addrOf, entryOf, registryWritable, toHex, interpret },
+    util: { varint, encodeServiceDue, decodeServiceDue, encodeField1Varint, decodeField1Varint, encodeEnumArg, encodeStringArg, encodeUuidPayload, decodeUuidBytes, addrOf, entryOf, registryWritable, toHex, interpret, previewWriteFrame },
     simulateConnectionLoss: () => handleTransportLoss('Simulated connection drop'),
     simulateSetExperimental: (on) => {
       if (!state.demo) throw new Error('simulateSetExperimental is only available in demo mode');

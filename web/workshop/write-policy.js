@@ -21,7 +21,7 @@
   // the minor number for features and the patch number for fixes; keep the top
   // entry of docs/CHANGELOG.md in step (a source check enforces this). The
   // engine and UI read this from the policy object.
-  const VERSION = { version: '0.48.0', date: '2026-11-07' };
+  const VERSION = { version: '0.51.1', date: '2026-11-08' };
 
   // Every operation is experimental and carries an evidence label:
   //   observed-working  — a change was observed on at least one real bike
@@ -286,8 +286,6 @@
     ['Battery2', 'SO_C_UPPER_LIMIT'],
     ['DriveUnit', 'RESET_RIDE_STATISTICS'],
     ['DriveUnit', 'RESET_UDAM_VALUES'],
-    ['DriveUnit', 'HIGH_POWER_PORT_ACTIVE'],
-    ['DriveUnit', 'LOW_POWER_PORT_ACTIVE'],
     ['DriveUnit', 'MULTI_PURPOSE_PORT_STATUS'],
     ['DriveUnit', 'BATTERY_KEY_LOCK_NUMBER'],
     ['HeadUnit', 'BUZZER'],
@@ -295,6 +293,14 @@
   ];
   const HIGH_IMPACT = new Set(HIGH_IMPACT_PAIRS.map((pair) => pair.join('.')));
   const HIGH_IMPACT_REASON = 'High-impact register. Type the register name to confirm.';
+  // The two dedicated Power ports controls are deliberately normal-tier: they
+  // are written by the Power ports card under the same staged batch, approval
+  // and read-back as the light/service controls. Without this override the
+  // generic PORT name pattern below would tag them as high-impact.
+  const NORMAL_TIER_OVERRIDE = new Set([
+    'DriveUnit.LOW_POWER_PORT_ACTIVE',
+    'DriveUnit.HIGH_POWER_PORT_ACTIVE',
+  ]);
 
   // Any name suggesting a lock, security, update, reset, calibration, key or
   // port changes behaviour beyond a simple preference. It is a speed bump, not
@@ -417,6 +423,9 @@
     }
     if (entry.writable !== true) {
       return { tier: 'registry-readonly', reason: 'Read-only in the registry. The bike will usually refuse this write.' };
+    }
+    if (NORMAL_TIER_OVERRIDE.has(entry.component + '.' + entry.name)) {
+      return { tier: 'normal', reason: null };
     }
     if (HIGH_IMPACT.has(entry.component + '.' + entry.name) || isHighImpactName(entry.name)) {
       return { tier: 'high-impact', reason: HIGH_IMPACT_REASON };

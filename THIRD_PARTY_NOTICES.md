@@ -49,6 +49,23 @@ hashes, and file-level categorization.
 - **Scope:** Research reference for CAN-FD datapoint analysis (no code files
   copied).
 
+### `bg443/BikeBridge`
+- **Author:** bg443 (`https://codeberg.org/bg443/BikeBridge`)
+- **Inspected revision:** maintainer-supplied source archive, reviewed
+  2026-11-07 (the archive carries no commit metadata).
+- **License:** GNU General Public License v3.0 or later
+  (**GPL-3.0-or-later**).
+- **Scope:** Read-only research reference for the Bosch BES3 (Smart System)
+  BLE/MCSP protocol only: segmentation framing and reassembly, `MobileApp`
+  (`0x40xx`) peer request handling, registration ordering, and assist-mode
+  message schemas.
+- **No code copied.** Because BikeBridge is GPL-3.0-or-later and this project
+  is MIT (code) plus CC BY 4.0 (researched data), no BikeBridge source file,
+  Kotlin class, generated protobuf module, test, or verbatim table is
+  redistributed here. Only factual wire-protocol observations were studied and
+  independently re-implemented. BikeBridge is credited by name and URL; nothing
+  from it is relicensed under this project's licenses.
+
 ---
 
 ## 3. Trademarks

@@ -5,11 +5,13 @@ This note records what is actually known about `DriveUnit.BIKE_LIGHT_POWER`
 from assumptions.
 
 **Conclusion up front:** the power writer is **enabled, bounded and marked
-`known-issue` (observed not working)**. The register accepts a write and reads
-back the written value, but the actual lamp power/output does not change on
-tested bikes. The accepted range is still 1.0–18.0 W in 0.1 W steps, every write
-still passes the approval gate and a read-back, and nothing is retried or rolled
-back. The lamp effect and behaviour on other bikes/firmware remain unverified.
+`known-issue` (observed not working)**. On the tested bike the register accepted
+a write and the Workshop read the written bytes back, without an observed change
+in lamp output. The Workshop still bounds its own input to 1.0–18.0 in 0.1
+steps, every write still passes the approval gate and a read-back, and nothing
+is retried or rolled back. The ×10 payload scaling and the register's
+interpretation in watts are **not independently verified**; the electrical
+effect and behaviour on other bikes/firmware remain unverified.
 
 ## Evidence
 
@@ -33,17 +35,21 @@ repository working tree. No synthetic log was created to stand in for anything.
 
 What this evidence proves:
 
-- the register accepts a USB write and retains the written value at least until
-  the immediate read-back;
-- the `/10` decoding (`08 96 01` = 150 tenths = 15.0 W) matches the value that
-  was written.
+- the register accepts a USB write from the Workshop;
+- an immediate read-back returns the same raw bytes the Workshop sent;
+- the Workshop's own encoder and decoder agree on those bytes
+  (`08 96 01` → field-1 varint 150 → displayed 15.0). This is self-consistency
+  of the implementation, not external verification of the scaling.
 
 What it does **not** prove:
 
+- that the integer represents tenths of a watt, or any watt value at all;
+- that the register controls lamp power, brightness, output limiting or another
+  function;
 - that lamp brightness or output behaviour changes;
 - that the value persists across a power cycle;
 - that the same value is accepted on other bikes, drive units or firmware;
-- that values outside the 1.0–18.0 W range are safe.
+- that values outside the Workshop's 1.0–18.0 input bounds are safe.
 
 ## Registers and encodings
 
@@ -59,22 +65,28 @@ Source: `src/address-registry.generated.js` (entries at 6175, 6177, 6178).
 The registry marks 0x1822 `writable:true` but `confirmed:false` and records no
 `source` or `notes` for it.
 
-### Decoding
+### Workshop encoding and display (not a verified register specification)
 
 `web/workshop/engine.js` (`interpret()`) treats `BIKE_LIGHT_POWER` as a protobuf
-`field 1` varint whose value is scaled by ten:
+`field 1` varint whose value is divided by ten for display, and `Writers.lightPower`
+encodes an entered number as `round(value × 10)`:
 
 ```
-value_in_watts = field1_varint / 10
+display_value = field1_varint / 10
+payload_varint = round(input × 10)
 ```
 
-For example:
+This is this application's convention. Protobuf structure alone establishes the
+varint encoding of the integer, not that Bosch interprets that integer as tenths
+of a watt.
 
-| Raw payload | Field 1 varint | Watts | Where |
+Examples of the Workshop's own encoding:
+
+| Raw payload | Field 1 varint | Displayed by Workshop | Where |
 | --- | --- | --- | --- |
-| `08 0a` | 10 | 1.0 W | demo seed, `web/workshop/demo-data.js` (key `6178`) |
-| `08 78` | 120 | 12.0 W | written on the reference bike (2026-10-19) |
-| `08 96 01` | 150 | 15.0 W | written on the reference bike (2026-10-19); also the value in the 2026-10-18 export |
+| `08 0a` | 10 | 1.0 | demo seed, `web/workshop/demo-data.js` (key `6178`) |
+| `08 78` | 120 | 12.0 | written on the reference bike (2026-10-19) |
+| `08 96 01` | 150 | 15.0 | written on the reference bike (2026-10-19); also the value in the 2026-10-18 export |
 
 `08` is the tag for field 1 (varint); the bytes after it are the varint value.
 
@@ -107,13 +119,15 @@ read as a wattage.
 
 ## Why the writer stays bounded
 
-1. **Safety.** Wrong power can damage the lamp/output; the (removed) Classic
-   Reader treated this as a hard stop. The writer therefore accepts only the
-   documented 1.0–18.0 W range in 0.1 W steps.
+1. **Unknown semantics.** The register's electrical meaning and the ×10 scaling
+   are unverified, so the Workshop bounds its own input to 1.0–18.0 in 0.1 steps
+   instead of passing arbitrary values. The removed Classic Reader treated this
+   register as read-only; that is historical context, not a safety proof.
 2. **Scope of the evidence.** Two write/read-back pairs on one bike/firmware
-   show that the stored value changes. They do not show that the lamp responds
-   or that other hardware behaves the same way, so the operation stays
-   experimental and the UI states the limit.
+   show that the Workshop can store and retrieve its own bytes. They do not show
+   that the lamp responds, that the value is a power setting, or that other
+   hardware behaves the same way, so the operation stays experimental and the UI
+   states the limit.
 3. **Per-write approval.** Every write is individually approved (in a live
    session) and immediately re-read; nothing is retried and nothing is rolled
    back.
@@ -136,6 +150,9 @@ the write and reading it back.
 
 ## Open questions
 
+- Does the field-1 integer represent tenths of a watt, or something else?
+- What does the register actually control: lamp power, brightness, output
+  limiting, reserve calculation, or another function?
 - Does lamp brightness/output change with the stored value, and when?
 - Does the written value persist across a power cycle?
 - Does 0x181F constrain or override 0x1822?

@@ -84,3 +84,53 @@ A capture of one of the never-read registers (`ASSIST_MODE_LIMITS`,
 `RemoteControl.ASSIST_MODE_USAGE_TOTAL`) on a bike that has a deactivated mode,
 or a dealer/Flow session that reports the mode list. Until then the honest
 answer stays: the modes are visible, their numbers are not.
+
+## Cross-reference: BikeBridge message schemas (read-only)
+
+The BikeBridge project (`https://codeberg.org/bg443/BikeBridge`,
+GPL-3.0-or-later) was inspected as a **read-only research reference**; no code
+or schema file was copied. Its protobuf definitions add two useful facts to
+this investigation.
+
+### Message shapes
+
+| Message | Fields | Used by |
+| --- | --- | --- |
+| `ConfigId` | `value` (string, field 1) | request body of `0x108B` |
+| `ApplicationIdentifier` | `config_id` (field 1), `config_version` (field 2) | entries of the arrays below |
+| `ArrayOf8AssistModeIdentifier` | repeated `ApplicationIdentifier` (field 1) | `REQUIRED_ASSIST_MODES_UPPER` `0x183E` |
+| `AssistModeInformationNullable` | `value` (field 1) of `AssistModeInformation` | response of `0x108B` |
+| `AssistModeInformation` | `identifier` (1), `name_short` (2), `name_long` (3), `color` (4), `assist_mode_position` (5, `1..5` = position `0..4`), `user_adjustable` (6), `user_adjusted` (7) | response of `0x108B` |
+| `AssistModeLimits` | `maximum_speed` (1), `maximum_motor_power` (2), `maximum_motor_torque` (3), `maximum_motor_assistance` (4), `motor_assistance_application` (5, repeated int32) | `ASSIST_MODE_LIMITS` `0x188B` |
+| `ArrayOf4AssistModeLimits` | repeated `AssistModeLimits` (field 1) | outer body of `0x188B` |
+
+These are protocol facts (field numbers and meanings), not copied tables.
+
+### A possible bootstrap for deactivated-mode ids
+
+BikeBridge's captured registration replay calls `GET_ASSIST_MODE_INFORMATION`
+(`0x108B`) once per identifier read from `REQUIRED_ASSIST_MODES_UPPER`
+(`0x183E`) — the *required* list, not the *active* list. If `0x183E` also
+reports identifiers for modes that are not currently active, that would be a
+read-only way to obtain an id for a deactivated mode, which is exactly what
+this investigation is missing.
+
+Two caveats keep this as a hypothesis:
+
+1. BikeBridge's replay also contains **hardcoded** identifier strings
+   (`"0"`, `"A100GAAAA0"`, `"A100GAAAD0"`, `"A100GAAAF0"`, `"A100MSPIC8"`,
+   `"A100GAAAC0"`, `"A100G0AUTO"`, `"A100ECOP38"`, `"A100GAAAE0"`,
+   `"A100GAAAB0"`) rather than values read from the bike in that run. That
+   suggests a known catalogue, but the strings may be bike- or model-specific.
+2. It has not been verified on real hardware whether `0x183E` returns ids for
+   deactivated modes on a bike that has one, or whether `0x108B`/`0x108C`
+   answer for such an id.
+
+### Documentation inconsistency found
+
+`0x180D` is used twice in this document with different meanings: the value
+table above calls it `ASSIST_MODE_COLORS`, while the candidate table calls it
+`ASSIST_MODE_LONG_NAMES`. BikeBridge's registration order lists
+`0x180D = ASSIST_MODE_LONG_NAMES` and `0x180E = ASSIST_MODE_COLORS`, matching
+the candidate table. The local address registry remains authoritative; this is
+recorded here so a future change does not rely on the wrong row.

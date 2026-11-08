@@ -6,6 +6,155 @@ single source of truth; every commit that changes behaviour bumps that version
 and adds an entry here, newest first. The top entry below must match
 `POLICY.VERSION` (a source check enforces this).
 
+## 0.51.1 — 2026-11-08
+
+- The long payload-assumption notice was removed from the Power ports card. The
+  card keeps its individual **Experimental · Untested** header chip, and the
+  staged-row warning still states that the encoding and electrical effect are
+  unverified; the evidence boundary remains in the documentation.
+
+## 0.51.0 — 2026-11-08
+
+- **Power ports are normal-tier.** `DriveUnit.LOW_POWER_PORT_ACTIVE` and
+  `DriveUnit.HIGH_POWER_PORT_ACTIVE` are now explicitly normal-tier via
+  `NORMAL_TIER_OVERRIDE`, so the staged Power ports batch applies like the light
+  and service controls: no "Confirm high-impact registers" dialog. The one-shot
+  grant, single write and independent read-back are unchanged, and the Write Lab
+  keeps the typed-name gate for every other `PORT` register. The tier counts
+  become 1 blocked / 861 read-only / 22 high-impact / 11 normal.
+- **Reconnect with a connection-mode picker.** Every reconnect control (top bar
+  and the banner in each tab) now opens one shared picker offering **USB**,
+  **Bluetooth (MCSP)** and **Bluetooth (Live Data, read-only)**. The last used
+  mode is preselected; an unavailable mode is disabled with the reason (WebUSB
+  or Web Bluetooth missing, or the transport module not loaded). One attempt at
+  a time, progress in the connection pill, and controls restored on failure or
+  cancellation. Switching transport clears staged drafts/pending changes and
+  never replays a write.
+- **Direct light on/off button (limited staging exception).** The staged
+  "switch the light on now" checkbox is gone. The light card now shows a button
+  derived from the read `DriveUnit.BIKE_LIGHT` state: *Turn light off* when on,
+  *Turn light on* when off, and *Light state unknown* plus a read-only refresh
+  when unread. One click performs exactly one light-switch write through the
+  existing writer pipeline, with the same gates, audit log and independent
+  read-back. It never stages a row and never touches other pending changes.
+  Success is shown only after a matching fresh read-back; an acknowledged write
+  with a mismatching read-back is reported as unverified. Availability, startup
+  mode and power controls are unchanged.
+- **Bluetooth MCSP: serialized GATT writes.** Handshake commands, normal MCSP
+  requests and the automatic `MobileApp` peer responses now share one
+  session-scoped TX chain, so two GATT write operations can no longer be in
+  flight at once (the field log's "GATT operation already in progress"). A
+  rejected write reaches its caller but does not block the queue; `close()`
+  rejects queued work, ignores late notifications and forbids old-session work
+  from running after a reconnect. Protocol responses are still awaited outside
+  the chain, so incoming peer requests stay answerable.
+- **Bluetooth failures are labelled correctly.** A failed Bluetooth send is no
+  longer reported as a "USB transfer failed"; the loss message names the
+  transport that actually failed. Connection-loss handling is idempotent.
+- **Bluetooth Live Data: telemetry fixed.** The live session is published before
+  notifications start, so the first frame is no longer dropped; the current
+  value is read before subscribing so a snapshot cannot overwrite newer
+  telemetry; a notify-only characteristic no longer aborts the connection; zero
+  values are kept as valid. The telemetry card distinguishes waiting for the
+  first value, live, stale (with the last reception time) and per-field
+  "not available". Disconnect keeps the last values but marks them stale.
+  Reconnect registers exactly one listener and removes it on disconnect.
+- The light switch is documented as a limited exception to the staged Apply
+  flow, not to verification. Both suites cover the reconnect picker, the direct
+  light action, GATT serialization/cleanup and the Live Data state machine.
+
+## 0.50.0 — 2026-11-07
+
+- **Power ports card (experimental, untested).** The Configuration tab now has a
+  dedicated card for `DriveUnit.LOW_POWER_PORT_ACTIVE` (0x1831) and
+  `DriveUnit.HIGH_POWER_PORT_ACTIVE` (0x1832). Each port offers Unchanged /
+  Enable / Disable; unchanged ports are never written. A read-only "Read port
+  states" button refreshes both values, and unknown values are never treated as
+  off. Each changed port is staged as a registry-bound `GENERIC_WRITE` step, so
+  it keeps the high-impact typed register-name gate, the one-shot grant, a
+  single write and an independent read-back. The batch stops at the first
+  unverified step and is never retried or rolled back.
+- **No new write operation.** The card reuses the existing generic writer and
+  the existing write policy; no policy operation, writer method, address,
+  approval gate or write-verification rule was added or changed.
+- **Evidence boundary.** The registers are listed with kind `unknown` and no
+  confirmed encoding. The `08 01` / `08 00` payloads are labelled as an
+  unverified assumption in the card, the pending-changes warning and the
+  documentation. A matching read-back is not claimed to prove a physical
+  effect, correct wiring, or persistence after a restart. No hardware validation
+  has been performed.
+- Demo data now seeds both port registers so the card can be exercised without
+  a bike; the demo generator keeps the same seeds.
+- **Configuration tab.** The tab is now labelled **Configuration** (was
+  "Configure"); the user-facing strings and docs use the same name.
+- **Configuration layout.** Cards now stack one after another instead of side by
+  side, so a later card never leaves a half-empty row. All five cards are
+  dropdowns, closed by default and opened by clicking the header. Each open
+  state is kept across the re-renders caused by its own controls and cleared on
+  a session change. Visible prose in the tab was reduced to facts.
+- **Card icons.** Each Configuration card now has its own line glyph (bulb,
+  calendar, plug, shield, wrench) drawn with one stroke weight and one shared
+  neutral tile/line colour, matching the monochrome vector glyphs in the PDF
+  report. The previous mix of one amber icon and four identical wrenches is
+  gone.
+- **One warning chip per card.** Each Configuration card carries exactly one
+  evidence chip in its header, derived from that card's operations: Bike light
+  "Mixed evidence", Service interval "Observed working", and Power ports / ID
+  sync / Write Lab "Untested". Per-option chips and repeated experimental text in
+  subtitles were removed. Subtitles are short factual one-liners.
+- **Diagnostic report battery icons.** The eight battery-information tiles no
+  longer reuse one battery outline. Each metric has its own line glyph (charge
+  bars, bolt, circular arrow for cycles, ascending bars, min/max thermometer,
+  health shield, half-filled cell) drawn with one stroke width and one ink
+  colour. All report glyphs share one clean line style: 0.5 mm stroke, rounded
+  caps and joins, restored afterwards so frames and tables keep their square
+  style. The cycle arrow is a smooth 24-segment arc, battery terminals are
+  proper nubs, and min/max markers are compact. The glyph set is exported as a
+  testable presentation helper.
+- **Prose reduced.** User-facing strings and documentation were shortened to
+  facts; the "Cleared on disconnect…" style notices and marketing phrasing were
+  removed.
+- **No unchanged writes.** A port whose freshly read payload already equals the
+  requested payload is not staged, matching the light card. Restaging a card
+  replaces only that card's own pending rows, never another card's. A port with
+  an unread value is refused instead of being guessed as off, and the port
+  draft is cleared on a session change.
+
+## 0.49.0 — 2026-11-07
+
+- **Streaming BLE reassembly.** The Web Bluetooth transport now keeps a byte
+  stream buffer and per-channel accumulators, so a segmentation header or
+  payload split across notifications, several frames in one notification, and
+  fragmented message-bus bodies are reassembled instead of being dropped. State
+  is cleared on every (re)connect and on close.
+- **Complete `MobileApp` (`0x40xx`) responder.** The bike's startup requests are
+  answered from `0x41xx` with the documented reads (UI priority, issue types,
+  static feature properties, altitude-graph samples), an explicit `UNSUPPORTED`
+  or `MALFORMED` status when a request is refused, a validated `STARTUP_STAGE`
+  write, and the `0x9b` altitude-graph RPC. Response types and notifications are
+  never answered. The requested segmentation packet defaults to 244 bytes.
+- **Write Lab visibility.** The card previews the exact write frame (target,
+  payload and body length, hex), annotates the payload as protobuf, shows the
+  enum wire value in the value picker, offers "Use current value" from the last
+  read without sending a request, shows the acknowledgement status in the
+  result, session log and failure notice, shows the `N / 64 bytes` budget, and
+  adds Copy payload / Copy frame helpers. No write gate changed.
+- **Clean-room protocol notes.** `docs/protocol-notes.md` documents the
+  segmentation and message-bus framing, status codes, the `MobileApp` peer and
+  the startup stage, and records the single-octet limit of the shared parser.
+- **Version stamp.** The version is now written into `index.html` (header,
+  footer and `data-version`), so a stale cached script bundle cannot silently
+  show an older number. A source check keeps the stamp in step with
+  `POLICY.VERSION`, and the footer reports when the loaded scripts and the
+  deployed build disagree.
+- **Documentation accuracy.** The README now states facts instead of narrative.
+  The `BIKE_LIGHT_POWER` (`0x1822`) description separates the Workshop's own
+  `round(input × 10)` encoding and input bounds from verified behaviour: the
+  scaling and the register's electrical meaning are not independently
+  established. `docs/investigation-light-power.md`, `WORKSHOP.md`,
+  `docs/workshop-write-safety.md` and `docs/write-path-map.md` were corrected to
+  the same evidence boundary.
+
 ## 0.48.0 — 2026-11-07
 
 - **Assistance-mode colours in the PDF report.** Both the Assistance modes

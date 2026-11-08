@@ -122,6 +122,15 @@
   const stroke = (doc, c) => doc.setDrawColor(c[0], c[1], c[2]);
   const color = (doc, c) => doc.setTextColor(c[0], c[1], c[2]);
   function font(doc, size, style = 'normal', c = C.ink) { doc.setFont('helvetica', style); doc.setFontSize(size); color(doc, c); }
+  // One clean line style for every report glyph: a single stroke width with
+  // rounded caps and joins. Restored afterwards so frames and tables keep their
+  // default square style.
+  function glyphLine(doc, w = 0.5) {
+    doc.setLineWidth(w); doc.setLineCap('round'); doc.setLineJoin('round');
+  }
+  function glyphLineReset(doc) {
+    doc.setLineCap('butt'); doc.setLineJoin('miter');
+  }
 
   function mask(s) {
     if (!s) return s;
@@ -170,7 +179,7 @@
     doc.roundedRect(x, y, w, h, 1.2, 1.2, 'S');
     color(doc, line);
     doc.setDrawColor(line[0], line[1], line[2]);
-    doc.setLineWidth(0.75);
+    glyphLine(doc, 0.5);
     if (kind === 'motor') {
       doc.circle(cx, cy, 3.3, 'S');
       doc.circle(cx, cy, 1.0, 'F');
@@ -215,6 +224,79 @@
       font(doc, 3.4, 'bold', line);
       doc.text('ABS', cx, cy + 1.2, { align: 'center' });
     }
+    glyphLineReset(doc);
+    return true;
+  }
+
+  // One distinct line glyph per battery metric. All share a single stroke width
+  // and colour, matching the monochrome vector glyphs used for component
+  // thumbnails and in the Configuration cards. Returns false for an unknown kind.
+  const BATTERY_GLYPH_KEYS = Object.freeze(['soc', 'volt', 'cyc', 'kwh', 'cold', 'hot', 'soh', 'remaining']);
+  function hasBatteryGlyph(kind) {
+    return BATTERY_GLYPH_KEYS.indexOf(kind) !== -1;
+  }
+  function drawBatteryGlyph(doc, kind, x, y0, col = C.ink) {
+    if (!hasBatteryGlyph(kind)) return false;
+    stroke(doc, col); fill(doc, col); glyphLine(doc, 0.5);
+    const cell = () => {
+      doc.roundedRect(x + 1.2, y0 + 1.6, 5.6, 7.8, 0.8, 0.8, 'S');
+      doc.roundedRect(x + 3.1, y0 + 0.8, 1.8, 0.8, 0.2, 0.2, 'S');
+    };
+    if (kind === 'soc') {
+      // Battery with three even level bars.
+      cell();
+      [0, 1, 2].forEach((k) => doc.rect(x + 2.2, y0 + 3.0 + k * 2.2, 3.6, 1.4, 'F'));
+    } else if (kind === 'volt') {
+      // Lightning bolt.
+      doc.line(x + 4.8, y0 + 1.2, x + 2.8, y0 + 5.2);
+      doc.line(x + 2.8, y0 + 5.2, x + 4.2, y0 + 5.2);
+      doc.line(x + 4.2, y0 + 5.2, x + 3.0, y0 + 9.2);
+      doc.line(x + 3.0, y0 + 9.2, x + 5.6, y0 + 4.4);
+      doc.line(x + 5.6, y0 + 4.4, x + 4.2, y0 + 4.4);
+      doc.line(x + 4.2, y0 + 4.4, x + 4.8, y0 + 1.2);
+    } else if (kind === 'cyc') {
+      // Circular arrow: a smooth open arc with one clear arrowhead.
+      const cx = x + 4.0, cy = y0 + 5.2, r = 3.3;
+      const a0 = -Math.PI * 0.30, steps = 24;
+      const a1 = a0 + Math.PI * 1.85; // leave a 27-degree gap for the arrowhead
+      let px = cx + Math.cos(a0) * r, py = cy + Math.sin(a0) * r;
+      for (let i = 1; i <= steps; i++) {
+        const a = a0 + (a1 - a0) * (i / steps);
+        const nx = cx + Math.cos(a) * r, ny = cy + Math.sin(a) * r;
+        doc.line(px, py, nx, ny);
+        px = nx; py = ny;
+      }
+      const tx = -Math.sin(a1), ty = Math.cos(a1);
+      const px2 = -ty, py2 = tx;
+      doc.line(px, py, px - tx * 1.6 + px2 * 0.9, py - ty * 1.6 + py2 * 0.9);
+      doc.line(px, py, px - tx * 1.6 - px2 * 0.9, py - ty * 1.6 - py2 * 0.9);
+    } else if (kind === 'kwh') {
+      // Ascending bars on a baseline: energy delivered over lifetime.
+      [3.0, 4.8, 6.6].forEach((h, i) => doc.rect(x + 1.4 + i * 2.0, y0 + 9.2 - h, 1.4, h, 'S'));
+      doc.line(x + 0.9, y0 + 9.4, x + 7.4, y0 + 9.4);
+    } else if (kind === 'cold' || kind === 'hot') {
+      // Thermometer: mercury height plus a compact - / + mark for min / max.
+      doc.roundedRect(x + 3.3, y0 + 1.2, 1.6, 5.8, 0.8, 0.8, 'S');
+      doc.circle(x + 4.1, y0 + 8.0, 1.4, 'S');
+      doc.line(x + 4.1, y0 + 7.0, x + 4.1, y0 + (kind === 'hot' ? 2.0 : 4.8));
+      doc.line(x + 1.2, y0 + 2.6, x + 2.4, y0 + 2.6);
+      if (kind === 'hot') doc.line(x + 1.8, y0 + 2.0, x + 1.8, y0 + 3.2);
+    } else if (kind === 'soh') {
+      // Shield with a check: state of health.
+      doc.line(x + 1.4, y0 + 2.0, x + 4.0, y0 + 1.0);
+      doc.line(x + 4.0, y0 + 1.0, x + 6.6, y0 + 2.0);
+      doc.line(x + 6.6, y0 + 2.0, x + 6.2, y0 + 6.0);
+      doc.line(x + 6.2, y0 + 6.0, x + 4.0, y0 + 9.2);
+      doc.line(x + 4.0, y0 + 9.2, x + 1.8, y0 + 6.0);
+      doc.line(x + 1.8, y0 + 6.0, x + 1.4, y0 + 2.0);
+      doc.line(x + 2.6, y0 + 4.8, x + 3.6, y0 + 5.8);
+      doc.line(x + 3.6, y0 + 5.8, x + 5.5, y0 + 3.8);
+    } else {
+      // Remaining energy: one half-height fill, distinct from the three SoC bars.
+      cell();
+      doc.rect(x + 2.2, y0 + 5.4, 3.6, 3.8, 'F');
+    }
+    glyphLineReset(doc);
     return true;
   }
 
@@ -545,12 +627,12 @@
         ['Total energy delivered', d.deliveredWh != null ? `${NF1.format(d.deliveredWh / 1000)} kWh (lifetime)` : null, 'kwh'],
         ['Minimum battery temperature', d.tMin != null ? `${NF1.format(d.tMin)} °C (lifetime)` : null, 'cold'],
         ['Maximum battery temperature', d.tMax != null ? `${NF1.format(d.tMax)} °C (lifetime)` : null, 'hot'],
-        ['Battery state of health', d.soh != null ? `${d.soh} %` : null, 'soc'],
-        ['Remaining energy', d.remainingWh != null ? `${NF0.format(d.remainingWh)} Wh` : null, 'kwh'],
+        ['Battery state of health', d.soh != null ? `${d.soh} %` : null, 'soh'],
+        ['Remaining energy', d.remainingWh != null ? `${NF0.format(d.remainingWh)} Wh` : null, 'remaining'],
       ];
       if (d.battery2) {
         items.push(['Battery 2 state of charge', d.battery2.soc != null ? `${d.battery2.soc} %` : null, 'soc']);
-        items.push(['Battery 2 state of health', d.battery2.soh != null ? `${d.battery2.soh} %` : null, 'soc']);
+        items.push(['Battery 2 state of health', d.battery2.soh != null ? `${d.battery2.soh} %` : null, 'soh']);
       }
       const w = (CW - GAP) / 2; const bh = 14.2;
       const needed = 8 + Math.ceil(items.length / 2) * (bh + GAP);
@@ -565,22 +647,23 @@
       });
     }
 
+    // Every battery metric gets its own glyph from the shared vector set.
     function battIcon(x, y0, kind) {
-      stroke(doc, C.ink); doc.setLineWidth(0.4);
-      doc.roundedRect(x, y0 + 1, 5, 8.2, 0.6, 0.6, 'S'); doc.line(x + 1.6, y0 + 0.3, x + 3.4, y0 + 0.3);
-      if (kind === 'soc') { fill(doc, C.ink); [0, 1, 2].forEach((k) => doc.rect(x + 1, y0 + 6.8 - k * 2, 3, 1.4, 'F')); }
-      else if (kind === 'volt') { doc.line(x + 2.9, y0 + 3, x + 1.9, y0 + 5.3); doc.line(x + 1.9, y0 + 5.3, x + 3.1, y0 + 5.3); doc.line(x + 3.1, y0 + 5.3, x + 2.1, y0 + 7.6); }
-      else if (kind === 'cyc') { doc.circle(x + 5.2, y0 + 8, 1.4, 'S'); }
-      else if (kind === 'kwh') { doc.line(x + 4.2, y0 + 8.2, x + 5.4, y0 + 6.6); doc.line(x + 5.4, y0 + 6.6, x + 6.2, y0 + 8.4); }
-      else if (kind === 'cold') { doc.line(x + 5.2, y0 + 6, x + 5.2, y0 + 9.6); doc.line(x + 3.6, y0 + 7.8, x + 6.8, y0 + 7.8); }
-      else if (kind === 'hot') { [4.4, 5.6, 6.8].forEach((xx) => doc.line(x + xx, y0 + 6.4, x + xx, y0 + 9.4)); }
+      if (!drawBatteryGlyph(doc, kind, x, y0, C.ink)) {
+        // Unknown kind: keep a plain cell outline so the tile is never empty.
+        stroke(doc, C.ink); glyphLine(doc, 0.5);
+        doc.roundedRect(x + 1.2, y0 + 1.6, 5.6, 7.8, 0.8, 0.8, 'S');
+        doc.roundedRect(x + 3.1, y0 + 0.8, 1.8, 0.8, 0.2, 0.2, 'S');
+        glyphLineReset(doc);
+      }
     }
     function drawIcon(key, x, y0, col) {
-      stroke(doc, col); doc.setLineWidth(0.5);
+      stroke(doc, col); glyphLine(doc, 0.5);
       if (key === 'RemoteControl') { doc.roundedRect(x + 1.5, y0, 6, 10, 1.2, 1.2, 'S'); doc.line(x + 4.5, y0 + 2, x + 4.5, y0 + 4.4); doc.line(x + 3.3, y0 + 3.2, x + 5.7, y0 + 3.2); doc.line(x + 3.3, y0 + 7.6, x + 5.7, y0 + 7.6); }
       else if (key === 'DriveUnit') { doc.ellipse(x + 4.5, y0 + 5, 4.5, 3.4, 'S'); doc.circle(x + 5.4, y0 + 5, 1.5, 'S'); }
       else if (key === 'Battery' || key === 'Battery2') { doc.roundedRect(x + 2, y0 + 1, 5, 9.5, 0.8, 0.8, 'S'); doc.line(x + 3.3, y0, x + 5.7, y0); doc.line(x + 3.2, y0 + 4, x + 5.8, y0 + 4); doc.line(x + 3.2, y0 + 6.5, x + 5.8, y0 + 6.5); }
       else { doc.roundedRect(x + 1, y0, 8, 10.5, 0.8, 0.8, 'S'); doc.rect(x + 2.6, y0 + 1.8, 4.8, 6, 'S'); }
+      glyphLineReset(doc);
     }
 
     // The component photo for a component: the embedded base64 map when the
@@ -786,5 +869,6 @@
     cadenceFill, otherShare, withOtherSegment, otherEfficiency, probeRowHasValue, probeSummary,
     OTHER_COLOR, OTHER_NOTE, CADENCE_COLORS,
     COMPONENT_GLYPH_KEYS, hasComponentGlyph, drawComponentGlyph,
+    BATTERY_GLYPH_KEYS, hasBatteryGlyph, drawBatteryGlyph,
   };
 })();

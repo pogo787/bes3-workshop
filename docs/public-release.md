@@ -43,6 +43,27 @@ the working repository:
    personal email addresses outside `web/vendor/`).
 6. Exits non-zero on any check or privacy finding.
 
+## Static hosting: cache revalidation
+
+The LAN deployment is served by nginx with `ETag` / `Last-Modified` and no
+`Cache-Control` header. Without explicit freshness information a browser may
+reuse a cached `.js` file while the HTML is fresh. The visible symptom is an
+older `POLICY.VERSION` in the UI even though the deployed build is current.
+
+Configure revalidation for static assets on the host:
+
+```nginx
+location ~* \.(html|js|css)$ {
+    add_header Cache-Control "no-cache";
+}
+```
+
+The application also stamps the version into `index.html` (header, footer and
+`data-version`). `tools/check-all.mjs` keeps that stamp in step with
+`POLICY.VERSION`, and the footer reports when the loaded scripts and the
+deployed `deploy-info.txt` disagree. A stale bundle is therefore visible rather
+than silent; a hard reload (Ctrl+Shift+R) clears it immediately.
+
 ## Component Photos in Both Trees
 
 `web/workshop/part-images.js` owns component photo resolution:

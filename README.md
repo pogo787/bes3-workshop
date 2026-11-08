@@ -1,139 +1,189 @@
 # BES3 Workshop for Bosch Smart System
 
-A browser-based diagnostic reader, configuration workshop, and PDF report generator for **Bosch Smart System (BES3, 2022+)** eBikes over USB-C ([WebUSB](https://developer.mozilla.org/en-US/docs/Web/API/WebUSB_API)) and Bluetooth ([Web Bluetooth](https://developer.mozilla.org/en-US/docs/Web/API/Web_Bluetooth_API)).
+Browser-based diagnostic reader, configuration tool and PDF report generator for
+Bosch Smart System (BES3, 2022+) eBikes over USB-C (WebUSB) and Bluetooth (Web
+Bluetooth). Unofficial; not affiliated with, authorized by, or endorsed by
+Robert Bosch GmbH.
 
-Everything runs **100% locally in your browser** (Chrome or Edge on Windows, macOS, or Linux) — no server, no account, no cloud upload, and no external network requests unless you explicitly opt in to loading component photos from `cdn.jsdelivr.net` for the current session (one button in the top bar; the photos are then used in every tab). It works directly via `file://` or static hosting (such as GitHub Pages).
+**Project repository:** <https://github.com/pogo787/bes3-workshop>
 
-> **Important Legal & Safety Notice:** This is an independent, unofficial open-source project built for interoperability, right-to-repair diagnostics, and protocol research. It is **not affiliated with, authorized by, or endorsed by Robert Bosch GmbH**. Only use write functions if you understand what they do at the protocol level, have verified that your hardware (such as 12 V bike lamps) matches the configured ratings, and doing so complies with local laws.
+## Facts
 
----
+| | |
+| --- | --- |
+| Entry point | `index.html`, a single page with no build step |
+| Transports | `web/transport-webusb.js` (USB-C), `web/transport-webble-mcsp.js` (MCSP/MessageBus over Web Bluetooth), `web/transport-webble.js` (read-only BLE Live Data Interface) |
+| Browser | Chrome or Edge on Windows, macOS or Linux. WebUSB requires a secure context; reads work from `file://`. |
+| Data flow | Reading, decoding, writing and report generation run in the browser. Exports are local files. A same-origin `deploy-info.txt` request checks the deployed version. |
+| External requests | None by default. Component photos load from `cdn.jsdelivr.net` only after the per-session opt-in button in the header. |
+| Optional CLI | `cd node && npm install && node cli.js` |
+| Version | `POLICY.VERSION` in `web/workshop/write-policy.js` is the single source of truth. The top entry of [`docs/CHANGELOG.md`](docs/CHANGELOG.md) and the `data-version` stamp in `index.html` must match it; a source check enforces this. |
+| Licenses | MIT for application code, CC BY 4.0 for researched data. See [License](#license). |
 
-## One Interface
+Legal: independent interoperability project. Use writes only if you understand the
+register, have checked the connected hardware, and are permitted under local law.
 
-1. **`index.html` — BES3 Workshop**
-   - **Overview (Reader):** Reads all detected BES3 components (`DriveUnit`, `Battery`, `Battery2` / PowerMore / DualBattery, `RemoteControl`, wireless `MiniRemote` status only when the strict `BRC3300` marker is detected, `HeadUnit` display, `ConnectModule`, `AntiLockBrakeSystem`, and `eShift` status), battery State of Health (SoH), full charge cycles, lifetime energy delivered, ride statistics per assistance mode, fault memory (`Issue` entries with 6-digit hex codes and Help Center links), and full bike configuration.
-   - **Configure (Writer):**
-     - **Bike Light Unlock & Configuration:** Enable or disable the 12 V bike light output (`0x1820`), configure startup light behavior (`0x1821`), set rated light power (`0x1822`, `1.0–18.0 W` in `0.1 W` steps; marked **known issue / observed not working** on tested bikes), and toggle the light (`0x181c`). Includes an S-Pedelec safety guard.
-     - **Service Interval Reminder:** Set the next service reminder by date (`+1 year`), distance (`+1,500 km`), custom date/km, or clear the stored reminder (`RemoteControl.SERVICE_DUE`, `0x2185`).
-     - **ID Conflict & System ID Sync (Experimental):** Compares `DriveUnit.BIKE_ID` (`0x182c`) against `RemoteControl.BIKE_ID` (`0x2184`) and provides a verified write tool to synchronize the drive unit's 16-byte System ID UUID into the control unit.
-   - **Diagnostic Report (A4 Vector PDF):** Generates a multi-page A4 PDF report (Overview, Ride Statistics with mode breakdowns, operating hours & cadence, Components & Battery Information, Configuration & Assistance Modes, Software Versions with component thumbnails when local photos are bundled or when remote photos are opted in for the session, and optional Fault Memory page), with live preview and optional identifier anonymization.
-   - **Session Log & Reconnect Handling:** Active USB keepalive monitoring (`0x2106`) polls every 800 ms and detects cable drops or bike power-off after three unanswered polls (about 2.4 s in the typical case, up to about 3.5 s when each poll also waits for its response). Every page offers a **Reconnect** button. Every write operation is logged with raw hex bytes, before/after values, and read-back verification status.
-   - **Connection doctor (read-only):** A failed USB or Bluetooth connect shows a classified checklist with the Linux udev rule for vendor id `108c` and the Windows Zadig/WinUSB steps as copyable text. It classifies only the errors and states the Workshop already sees and sends no frame.
-   - **Web Bluetooth (MCSP & Official Live Data Interface):** Connect over Bluetooth either via the full MCSP/MessageBus transport (`web/transport-webble-mcsp.js`, including the `MobileApp` peer startup handshake and `0x0e10` ↔ `0x4180` address translation for full component reads and verified configuration writes) or via Bosch's official, read-only eBike Live Data Interface (`web/transport-webble.js`, streaming 13 real-time telemetry fields from `0000eb20-eaa2-11e9-81b4-2a2ae2dbcce4`).
-   - **Live Demo & Offline Viewer:** Built-in simulated eBike (**Try the simulated demo**) and offline `.json` readout viewer (compatible with BES3 Workshop exports).
+## Features
 
----
+- **Overview.** Reads detected components (`DriveUnit`, `Battery`, `Battery2`,
+  `RemoteControl`, `HeadUnit`, `ConnectModule`, `AntiLockBrakeSystem`, `eShift`,
+  and wireless `MiniRemote` only when the `BRC3300` marker is present), battery
+  State of Health, charge cycles, lifetime energy, per-mode ride statistics,
+  fault memory with 6-digit hex codes, and the system configuration.
+- **Configuration.** Staged writes to the bike light registers, the service interval,
+  the two accessory power-port registers, the System ID, and a registry-bound
+  Write Lab. The power-port card is experimental and untested. Actions are staged in a
+  `Pending changes` panel and applied as one visible batch; each write is re-read
+  where the register is readable. The light on/off button is the one exception: it
+  writes immediately, still with the same gates, audit log and read-back. High-impact
+  and read-only tiers require typing the full register name once per batch. The gates
+  are documented in [`docs/workshop-write-safety.md`](docs/workshop-write-safety.md)
+  and [`docs/write-path-map.md`](docs/write-path-map.md).
+- **Reconnect and Bluetooth Live Data.** One reconnect picker offers USB,
+  Bluetooth (MCSP) and read-only Bluetooth (Live Data), preselecting the last mode
+  and disabling unavailable ones with the reason. The Live Data card shows waiting,
+  live, stale and per-field not-available states; zero is a valid value. MCSP is a
+  snapshot read protocol; continuous telemetry is the separate Live Data mode.
+- **Diagnostic Report.** Multi-page A4 vector PDF with live preview and optional
+  identifier anonymisation. Component photos appear only when bundled locally or
+  opted in for the session.
+- **Session Log.** Chronological write log with raw hex bytes, before/after
+  values and read-back status; JSON readout export and raw protocol log download.
+- **Connection doctor.** Read-only classified checklist after a failed USB or
+  Bluetooth connect; sends no frames.
+- **Demo and offline viewer.** Built-in simulated bike and a `.json` readout
+  viewer.
 
-## Hardware Compatibility Across Bosch BES3 eBikes
+## Recognized component identifiers
 
-The protocol core and Workshop UI are designed to work across the entire Bosch Smart System (BES3) lineup:
+Registry identifiers; not a hardware compatibility claim.
 
-- **Control Units (`RemoteControl`):** System Controller (`BRC3100`), LED Remote (`BRC3600`), Frame Controller (`BRC3610`), Purion 200 (`BRC3800`), Kiox 400C (`BRC3200`), plus separate detection of paired wireless accessories such as the **Mini Remote (`BRC3300`)**. The Remote card is shown only when the BLE peer database carries the `BRC3300` marker.
-- **Drive Units (`DriveUnit`):** Performance Line CX (`BDU374x`, `BDU384x`), Performance Line CX Race (`BDU376x`, `BDU386x`), Performance Line SX (`BDU314x`), Performance Line Speed (`BDU378x`, `BDU388x`), Performance Line / PX / Sport (`BDU336x`, `BDU338x`, `BDU346x`, `BDU347x`, `BDU348x`), Active Line / Active Line Plus (`BDU332x`, `BDU334x`, `BDU344x`), Cargo Line, and Hub Line (`BDU306x`).
-- **Batteries (`Battery` & `Battery2`):** PowerTube 360 / 500 / 540 / 600 / 625 / 720 / 750 / 800, CompactTube 400, PowerPack 400 / 500 / 545 / 600 / 725 / 800 (Frame & Rack), and PowerMore 250 range extender (`BBP362`).
-- **Displays & Optional Modules:** Kiox 300 (`BHU3600`), Kiox 500 (`BHU3700`), Purion 400 (`BHU3500`), Intuvia 100 (`BHU32000`), ConnectModule (`BCM3100` / `BCM3101`), Bosch eBike ABS / ABS Pro (`BAS3311` / `BAS35`), and eShift electronic shifting.
+- **Control units (`RemoteControl`):** `BRC3100`, `BRC3600`, `BRC3610`,
+  `BRC3800`, `BRC3200`; wireless `BRC3300` Mini Remote detected via the BLE peer
+  database.
+- **Drive units (`DriveUnit`):** `BDU374x`, `BDU384x`, `BDU376x`, `BDU386x`,
+  `BDU314x`, `BDU378x`, `BDU388x`, `BDU336x`, `BDU338x`, `BDU346x`, `BDU347x`,
+  `BDU348x`, `BDU332x`, `BDU334x`, `BDU344x`, `BDU306x`.
+- **Batteries (`Battery`, `Battery2`):** PowerTube 360/500/540/600/625/720/750/800,
+  CompactTube 400, PowerPack 400/500/545/600/725/800, PowerMore 250 (`BBP362`).
+- **Displays and modules:** `BHU3600`, `BHU3700`, `BHU3500`, `BHU32000`,
+  `BCM3100`, `BCM3101`, `BAS3311`, `BAS35`, eShift.
 
-Optional bus nodes (`HeadUnit`, `Battery2`, `ConnectModule`, `AntiLockBrakeSystem`) are probed non-intrusively via `PRODUCT_NAME` first; if absent on a given bike, their remaining registers are skipped cleanly so readouts stay fast and error-free on any hardware configuration.
+Optional bus nodes (`HeadUnit`, `Battery2`, `ConnectModule`,
+`AntiLockBrakeSystem`) are probed with `PRODUCT_NAME` first; when absent, their
+remaining registers are skipped.
 
----
+## Quick start
 
-## Quick Start
-
-### 1. Run in the Browser (No Installation Required)
 1. Clone or download this repository.
-2. Open **`index.html`** in **Google Chrome** or **Microsoft Edge** on Windows, macOS, or Linux.
-3. Switch on your eBike and connect a **USB-C data cable** to the diagnostic/charging USB port on your control unit.
-4. Click **Connect eBike via USB** and select your Bosch device in the browser prompt.
+2. Open `index.html` in Chrome or Edge.
+3. Switch on the eBike and connect a USB-C data cable to the diagnostic port on
+   the control unit.
+4. Click **Connect eBike via USB** and select the Bosch device in the browser
+   prompt.
 
-> **Windows Driver Note:** If the device appears in the browser picker but fails to open on Windows, Windows may have bound a generic driver instead of `WinUSB`. You can assign the `WinUSB` driver to the Bosch USB interface using [Zadig](https://zadig.akeo.ie/).
+On Windows, if the device appears in the picker but fails to open, the interface
+may need the `WinUSB` driver assigned with [Zadig](https://zadig.akeo.ie/). The
+connection doctor shows the Linux udev rule for vendor id `108c` and the Windows
+steps as copyable text.
 
-### 2. Node CLI (Optional)
-```bash
-cd node
-npm install
-node cli.js
-```
+## Write verification
 
----
+Over USB, a `WRITE` frame (`0x02`) is commonly answered with a `WRITE_RESPONSE`
+(`0x03`, `SUCCESS = 0x00`) carrying an empty payload — both when a change is
+accepted and when firmware ignores it. An acknowledgement is therefore not
+treated as proof that a value was applied.
 
-## How Verified Writing Works
+1. Configuration actions stage changes in a visible `Pending changes` panel. Each row
+   shows the register, decoded old → new value, exact hexadecimal payload, tier
+   and evidence. One `Apply N changes` action sends the batch in order.
+2. After the write frame, the engine issues an independent `READ` on the target
+   address.
+3. A step is reported as **verified** only when the fresh read-back matches the
+   requested value. A failed step stops the remaining batch. Nothing is retried
+   or rolled back.
 
-Over USB, Bosch Smart System components often acknowledge a `WRITE` frame (`0x02`) with `WRITE_RESPONSE` (`0x03`, status `SUCCESS = 0x00`) and an empty payload — both when a change is accepted and when it is silently ignored by firmware policy.
+### Write datapoints
 
-Therefore, **BES3 Workshop never trusts `WRITE_RESPONSE` alone**:
-1. Configure actions stage changes in a visible `Pending changes` panel. Each row shows the affected register, decoded old → new value, exact hexadecimal payload, tier and evidence. One `Apply N changes` action sends the visible batch in order; high-impact and read-only rows ask for the full register name once per batch.
-2. After sending the `WRITE` frame and waiting for the controller to settle, the engine performs an independent **`READ` request** on the target address.
-3. A step is marked **verified** only if the re-read payload decodes to the expected target value. If any step in a multi-step sequence is not verified, execution stops immediately.
-
-### Documented Write Datapoints in BES3 Workshop
-
-| Feature | Component & Datapoint | Address | Wire Encoding (Protobuf) |
-|---|---|---|---|
-| Bike light installed | `DriveUnit.BIKE_LIGHT_AVAILABLE` | `0x1820` | `08 01` = enabled, empty (`""`) = disabled |
-| Light startup config | `DriveUnit.BIKE_LIGHT_CONFIGURATION` | `0x1821` | `08 02` = remember last light state on power-up, empty = `0` |
-| Light power rating | `DriveUnit.BIKE_LIGHT_POWER` | `0x1822` | Field 1 varint in `0.1 W` units (`1.0–18.0 W`, e.g. `6.0 W` → `08 3c`, `12.0 W` → `08 78`) |
-| Light switch | `DriveUnit.BIKE_LIGHT` | `0x181c` | `08 01` = on, empty (`""`) = off |
+| Feature | Component & datapoint | Address | Payload written by the Workshop |
+| --- | --- | --- | --- |
+| Bike light installed | `DriveUnit.BIKE_LIGHT_AVAILABLE` | `0x1820` | `08 01` = enabled, empty = disabled |
+| Light startup config | `DriveUnit.BIKE_LIGHT_CONFIGURATION` | `0x1821` | `08 02` = remember last state on power-up, empty = `0` |
+| Light power register | `DriveUnit.BIKE_LIGHT_POWER` | `0x1822` | Field 1 varint = `round(input × 10)`. The Workshop bounds input to 1.0–18.0 in 0.1 steps. **The ×10 scaling and the register's electrical meaning are not independently verified.** The operation is marked `known-issue`: writes were acknowledged and read back on tested bikes without an observed change in lamp output. |
+| Light switch | `DriveUnit.BIKE_LIGHT` | `0x181c` | `08 01` = on, empty = off |
 | Service interval | `RemoteControl.SERVICE_DUE` | `0x2185` | `{1: Timestamp{1: sint64 seconds}, 2: uint32 meters}`, empty = cleared |
 | System ID sync | `RemoteControl.BIKE_ID` | `0x2184` | `0a 12 0a 10 <16-byte UUID>` (matched against `DriveUnit.BIKE_ID` `0x182c`) |
+| Low Power Port | `DriveUnit.LOW_POWER_PORT_ACTIVE` | `0x1831` | `08 01` = enable, `08 00` = disable (**experimental, untested**) |
+| High Power Port | `DriveUnit.HIGH_POWER_PORT_ACTIVE` | `0x1832` | `08 01` = enable, `08 00` = disable (**experimental, untested**) |
 
-See [`WORKSHOP.md`](WORKSHOP.md) for detailed technical documentation of BES3 Workshop.
+The power-port rows are the Workshop's own unverified payload assumption. The
+address registry lists both registers with kind `unknown` and no confirmed
+encoding; a matching read-back does not establish a physical effect, correct
+wiring or persistence after a restart. No hardware validation has been
+performed. Unchanged ports and ports whose stored payload already matches are
+never written; unknown values are never treated as off. Both port registers are
+normal-tier, so the staged batch needs no typed-name confirmation, but it still
+uses the one-shot grant, one write and a read-back.
 
----
+The 1.0–18.0 / 0.1-step bounds in the light-power row are input-validation
+limits of this application, not a verified register specification. See
+[`docs/investigation-light-power.md`](docs/investigation-light-power.md) for the
+evidence boundary.
 
-## Repository Hygiene & Privacy Guard
+See [`WORKSHOP.md`](WORKSHOP.md) for the technical guide.
 
-Keep bike-specific and personal data (real serial numbers, device certificates, raw PCAP captures) out of public commits. The optional pre-commit hook (`githooks/pre-commit`) scans staged changes and blocks commits containing real Bosch serial number patterns (`NNNNN-NNNN-NN-XXX-NN-NNNN`).
+## Repository hygiene & privacy guard
 
-**What the exports contain.** The PDF report, the JSON readout export
-("Save readout (.json)") and the debug log can contain personal data of the
-bike. The full JSON export contains the serial numbers of every component, the
-Bosch System ID (`BIKE_ID`), the battery key-lock number, the raw payload bytes
-(`hex`) of every read register, the Mini Remote probe rows (when a probe is run from the Registry browser) with their raw bytes
-and address-like values, the BLE peer-database records, and the payload bytes in
-the write log. The full debug log contains the write and RPC payload bytes.
+Keep bike-specific and personal data (real serial numbers, device certificates,
+raw PCAP captures) out of public commits. The optional pre-commit hook
+(`githooks/pre-commit`) blocks staged changes containing Bosch serial number
+patterns (`NNNNN-NNNN-NN-XXX-NN-NNNN`). Enable it with
+`git config core.hooksPath githooks`.
 
-The PDF report and the log view both offer an **"Anonymise identifiers"** switch
-(off by default). In the PDF it masks the identifiers. In the JSON export it
-masks the identifier displays, clears the raw bytes of identifier registers and
-BLE peer registers, reduces every probe row to `component`, `name` and `status`,
-and removes payload and read-back bytes from the write log. In the debug log it
-removes the payload bytes of every entry. An anonymised JSON export can still be
-opened again, but the removed bytes cannot be recovered from it.
+The PDF report, the JSON readout export ("Save readout (.json)") and the debug
+log can contain personal data: component serial numbers, the Bosch System ID
+(`BIKE_ID`), the battery key-lock number, raw payload bytes of read registers,
+Mini Remote probe rows, BLE peer-database records and write-log payload bytes.
 
-Enable the hook once after cloning:
-```bash
-git config core.hooksPath githooks
-```
+The PDF report and log view offer an **"Anonymise identifiers"** switch (off by
+default). In the PDF it masks identifiers. In the JSON export it masks
+identifier displays, clears raw bytes of identifier and BLE peer registers,
+reduces probe rows to `component`, `name` and `status`, and removes payload and
+read-back bytes from the write log. In the debug log it removes payload bytes.
+An anonymised JSON export can still be opened, but the removed bytes cannot be
+recovered.
 
-The hook is local and opt-in. CI runs both `node tools/check-all.mjs` and
-`node tools/check-workshop-light.mjs` on every push and pull request via
-`.github/workflows/check.yml`; a fresh clone cannot skip that job.
-
----
+CI runs `node tools/check-all.mjs` and `node tools/check-workshop-light.mjs` on
+every push and pull request via `.github/workflows/check.yml`.
 
 ## Foundations & Acknowledgments
 
-BES3 Workshop builds on the protocol research and open-source work of three upstream projects. The descriptions below are the maintainer-provided contribution summaries; see [`docs/sources.md`](docs/sources.md) for provenance, upstream file references, verified commit refs, and license detail.
+Contribution descriptions below are the maintainer-provided summaries; see
+[`docs/sources.md`](docs/sources.md) for provenance, upstream file references,
+verified commit refs and license detail.
 
-- **[`rweijnen/bosch-bes3-reader`](https://github.com/rweijnen/bosch-bes3-reader)** by **Remko Weijnen** — Protocol core, WebUSB transport, address registry, fault-memory RPCs, and part images.
+- **[`rweijnen/bosch-bes3-reader`](https://github.com/rweijnen/bosch-bes3-reader)** by **Remko Weijnen** — Protocol core, WebUSB transport, address registry, fault-memory RPCs and part images.
 - **[`radiohound/bosch-smart-system-ble`](https://github.com/radiohound/bosch-smart-system-ble)** by **radiohound** — Smart System BLE/MCSP research, write-behavior and response-handling insights, and research informing verify-by-reread.
 - **[`revlat/bes3-analyzer`](https://github.com/revlat/bes3-analyzer/tree/main)** by **revlat** — CAN-bus datapoint analysis and cross-verification of light and service-interval addresses.
-
----
+- **[`bg443/BikeBridge`](https://codeberg.org/bg443/BikeBridge)** by **bg443** — Read-only research reference for Bosch BES3 BLE/MCSP segmentation, `MobileApp` peer request handling, registration ordering and assist-mode schemas. **GPL-3.0-or-later; no code copied.**
 
 ## License
 
-This repository ships two license files with different scopes:
+Two license files with different scopes:
 
 - [`LICENSE`](LICENSE) — **MIT**, covering this project's application code (Workshop UI, engines, transports, tooling).
-- [`LICENSE-DATA`](LICENSE-DATA) — **CC BY 4.0**, covering the researched data (the address registry, generated reference documentation, and other reverse-engineered datasets). This file is reproduced verbatim from `rweijnen/bosch-bes3-reader`; it does not extend to bundled component images, third-party libraries, or other assets, whose own provenance governs their terms.
+- [`LICENSE-DATA`](LICENSE-DATA) — **CC BY 4.0**, covering the researched data (the address registry, generated reference documentation and other reverse-engineered datasets). Reproduced verbatim from `rweijnen/bosch-bes3-reader`; it does not extend to bundled component images, third-party libraries or other assets.
 
-Licenses differ per upstream source and are **not** all MIT:
+Licenses differ per upstream source:
 
-- **Code** from [`rweijnen/bosch-bes3-reader`](https://github.com/rweijnen/bosch-bes3-reader) (protocol core, transports, build tooling, part images) — MIT.
-- **Researched data** from the same project (the address registry and derived datasets) — **CC BY 4.0**, attribution required; see [`LICENSE-DATA`](LICENSE-DATA).
-- [`radiohound/bosch-smart-system-ble`](https://github.com/radiohound/bosch-smart-system-ble) documentation/data — **CC BY 4.0** (by redundo.app); any source code — MIT.
+- Code from [`rweijnen/bosch-bes3-reader`](https://github.com/rweijnen/bosch-bes3-reader) — MIT.
+- Researched data from the same project — **CC BY 4.0**, attribution required; see [`LICENSE-DATA`](LICENSE-DATA).
+- [`radiohound/bosch-smart-system-ble`](https://github.com/radiohound/bosch-smart-system-ble) documentation/data — **CC BY 4.0** (by redundo.app); source code — MIT.
 - [`revlat/bes3-analyzer`](https://github.com/revlat/bes3-analyzer/tree/main) — MIT.
-- **`jsPDF`** (`web/vendor/jspdf.umd.min.js`) — MIT License (`(c) 2010-2021 James Hall, (c) 2015-2021 yWorks GmbH`).
+- [`bg443/BikeBridge`](https://codeberg.org/bg443/BikeBridge) — **GPL-3.0-or-later**, research reference only. No BikeBridge code, schema files or tables are copied into this repository, so its copyleft does not extend to this project. Nothing from it is relicensed as MIT or CC BY 4.0.
+- `jsPDF` (`web/vendor/jspdf.umd.min.js`) — MIT (`(c) 2010-2021 James Hall, (c) 2015-2021 yWorks GmbH`).
 
-Attribution is also reproduced in the Workshop UI and PDF footers. See [`docs/sources.md`](docs/sources.md) for full provenance, [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for third-party notices, [`docs/public-release.md`](docs/public-release.md) for public release packaging, [`SECURITY.md`](SECURITY.md) for security and safety reporting, and [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution rules.
+See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for third-party notices,
+[`docs/public-release.md`](docs/public-release.md) for public release
+packaging, [`SECURITY.md`](SECURITY.md) for security and safety reporting, and
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution rules.
