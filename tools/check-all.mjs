@@ -279,14 +279,14 @@ const SAFE_HELPERS = [
 // These allow-listed builders render device- or file-derived values. Their
 // bodies are scanned as well, so an allow-list entry cannot hide an unescaped
 // interpolation inside a nested template.
-const SCANNED_HELPERS = ['compCards', 'remoteProbeTable', 'rowHtml', 'legend', 'stack', 'catalogBtn', 'modeRows', 'pendingPanel', 'renderLogRow', 'renderLogHistory', 'serviceReasons', 'bleLiveCard', 'portRows', 'portReasonsText', 'cardChip'];
+const SCANNED_HELPERS = ['compCards', 'remoteProbeTable', 'rowHtml', 'legend', 'stack', 'catalogBtn', 'modeRows', 'pendingPanel', 'renderLogRow', 'renderLogHistory', 'serviceReasons', 'bleLiveCard', 'portRows', 'portReasonsText', 'cardChip', 'apiHintHtml'];
 // Allow-listed fragments: whole HTML fragments built by the app above (never
 // raw device or file text).
 const SAFE_FRAGMENTS = [
   'badge', 'extra', 'inner', 'ic', 'rows', 'compCards', 'resultsHtml', 'friendly',
   'banner', 'writeLabCard', 'authNotice', 'demoNote', 'modeRows', 'compChips',
   'reportUrl', 'stamp', 'stack', 'legend', 'bikeSvg', 'nextYear', 'statsNote',
-  'img', 'emptyRows', 'portRows', 'portReasonsText',
+  'img', 'emptyRows', 'portRows', 'portReasonsText', 'apiLabel', 'portPayloadLabel',
 ];
 // Allow-listed member expressions: constants and numeric helpers.
 const SAFE_MEMBERS = [

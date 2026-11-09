@@ -120,8 +120,8 @@ The power-port rows are the Workshop's own unverified payload assumption. The
 address registry lists both registers with kind `unknown` and no confirmed
 encoding; a matching read-back does not establish a physical effect, correct
 wiring or persistence after a restart. No hardware validation has been
-performed. Unchanged ports and ports whose stored payload already matches are
-never written; unknown values are never treated as off. Both port registers are
+performed. A port whose stored payload already matches is never written;
+unknown values are never treated as off. Both port registers are
 normal-tier, so the staged batch needs no typed-name confirmation, but it still
 uses the one-shot grant, one write and a read-back.
 

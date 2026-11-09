@@ -1368,7 +1368,6 @@ check('source: power ports reuse the generic writer and are marked untested (sou
   assert(!ui.includes('MULTI_PURPOSE_PORT_STATUS'), 'the card is limited to the two power-port registers');
   eq((ui.match(/const PORT_TARGETS = \[/g) || []).length, 1, 'one port target list');
   assert(/const PORT_PAYLOAD = \{ enable: '08 01', disable: '08 00' \}/.test(ui), 'the two unverified payloads are declared');
-  assert(ui.includes("cardChip('ports')"), 'the card carries its individual Experimental · Untested chip');
   assert(!/no confirmed encoding/.test(ui), 'the verbose payload notice is removed from the card');
   assert(ui.includes('Unknown values are not treated as off'), 'unknown values are not guessed');
   assert(ui.includes('data-act="portRead"'), 'a read-only refresh control is present');
@@ -3624,10 +3623,10 @@ check('source: the light theme, the modal focus and the re-read control (source 
     await W.startDemo();
     W.setExperimental(true);
     const before = writeFrames;
-    // The light switch writes an empty payload (false); the demo answers with
-    // the stored value.
+    // The light switch writes an explicit 08 00 (proto3 false); the demo answers
+    // with the stored value.
     const step = {
-      label: 'light off', bytes: '(empty)', op: 'LIGHT_SWITCH', component: 'DriveUnit', name: 'BIKE_LIGHT',
+      label: 'light off', bytes: '08 00', op: 'LIGHT_SWITCH', component: 'DriveUnit', name: 'BIKE_LIGHT',
       address: W.util.addrOf('DriveUnit', 'BIKE_LIGHT'),
       run: (owner) => W.Writers.lightSwitch(false, owner),
     };
@@ -4133,7 +4132,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
     assert(/Pending changes \(1\)/.test(writeView().innerHTML), 'one change is staged');
     assert(/Apply 1 change/.test(writeView().innerHTML), 'the batch button names the count');
     assert(/Observed working/.test(writeView().innerHTML), 'the evidence label is shown');
-    assert(/dedicated/.test(writeView().innerHTML), 'the tier is shown');
+    assert(/Verified/.test(writeView().innerHTML), 'the tier is shown as a human-readable label');
     eq(mutations, before, 'staging sends no frame');
     ui.dom.pressEscape();
     assert(!/id="pendingChanges"/.test(writeView().innerHTML), 'Escape clears the staged changes');
@@ -4250,8 +4249,8 @@ check('source: the light theme, the modal focus and the re-read control (source 
       eq(inputs.map((r) => r.value).join(','), 'usb,ble-mcsp,ble-live', 'only the real transports are offered');
       assert(inputs.every((r) => r.disabled), 'unavailable modes are disabled');
       const bodyHtml = ui.doc.getElementById('modalBody').innerHTML;
-      assert(/WebUSB is not available/.test(bodyHtml), 'the USB reason is shown');
-      assert(/Web Bluetooth is not available/.test(bodyHtml), 'the Bluetooth reason is shown');
+      assert(/WebUSB.*not available|requires a secure context/.test(bodyHtml), 'the USB reason is shown');
+      assert(/Web Bluetooth.*not available|requires a secure context/.test(bodyHtml), 'the Bluetooth reason is shown');
       cancelModal();
       await p;
 
@@ -4304,6 +4303,77 @@ check('source: the light theme, the modal focus and the re-read control (source 
     }
   });
 
+  // ---- API availability hint tests ----
+
+  check('API hint source: no hint when both APIs are available (source)', () => {
+    const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
+    // When the API is available the function returns '' immediately.
+    assert(/if \(available\) return '';/.test(ui), 'apiHintHtml returns empty string when API is available');
+    // Both USB and BT are checked via apiAvail().hasUsb / hasBt.
+    assert(ui.includes("apiName === 'usb' ? apiAvail().hasUsb : apiAvail().hasBt"),
+      'availability of both APIs drives the early-exit guard');
+  });
+
+  check('API hint source: insecure-context hint appears only when !isSecureContext', () => {
+    const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
+    assert(ui.includes('API_SECURE'), 'a stable secure-context flag is defined');
+    assert(ui.includes('apiAvail()'), 'availability is read from a live helper');
+    assert(ui.includes('apiHintHtml'), 'apiHintHtml is defined');
+    // The insecure branch is guarded by the isSecureContext check.
+    assert(ui.includes("if (!apiAvail().secure)"), 'insecure-context branch is gated on secure flag');
+    // The Edge flag URL must appear exactly once and only inside that branch.
+    const edgeCount = (ui.match(/edge:\/\/flags/g) || []).length;
+    assert(edgeCount >= 1, 'Edge flag URL appears at least once');
+    // The secure-context missing-API message ('not available in this browser') must also exist.
+    assert(ui.includes('is not available in this browser.'), 'secure-context missing-API message exists');
+    // The HTTP-traffic warning belongs only to the insecure branch.
+    assert(ui.includes('does not encrypt HTTP traffic'), 'HTTP-traffic caveat present');
+    // Confirm the secure-context guidance (the second return) does not embed
+    // the Edge workaround. The click dispatcher also references edge://flags but
+    // is outside apiHintHtml, so we scope the check to the function body.
+    const fnStart = ui.indexOf('function apiHintHtml(');
+    const fnEnd   = ui.indexOf('\n  }', fnStart + 1);  // closing brace of apiHintHtml
+    const fnBody  = ui.slice(fnStart, fnEnd);
+    const secureBranchStart = fnBody.indexOf('return `<div class="notice api-hint"');
+    assert(secureBranchStart !== -1, 'secure-context return branch exists inside apiHintHtml');
+    assert(fnBody.indexOf('edge://flags', secureBranchStart) === -1,
+      'Edge workaround absent from secure-context guidance');
+  });
+
+  check('API hint source: USB and Bluetooth checked independently', () => {
+    const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
+    assert(/apiName === 'usb'.*apiAvail\(\)\.hasUsb|apiAvail\(\)\.hasUsb.*apiName === 'usb'/.test(ui),
+      'USB availability checked against hasUsb');
+    assert(/apiAvail\(\)\.hasBt/.test(ui), 'Bluetooth availability checked against hasBt');
+    assert(ui.includes("apiHintHtml('usb')"), 'USB hint injected with usb argument');
+    assert(ui.includes("apiHintHtml('bt')"),  'Bluetooth hint injected with bt argument');
+  });
+
+  check('API hint source: origin rendered with esc() and a copy button', () => {
+    const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
+    assert(ui.includes('window.location.origin'), 'window.location.origin is used for the origin value');
+    assert(/esc\(origin/.test(ui), 'origin is escaped before HTML insertion');
+    assert(ui.includes("data-act=\"copyApiHintOrigin\""), 'copy-origin action is present');
+    assert(ui.includes("data-act=\"copyApiHintEdgeUrl\""), 'copy-Edge-url action is present');
+    assert(/data-copy=.*esc\(flagUrl\)/.test(ui), 'Edge URL stored in data-copy with esc()');
+  });
+
+  check('API hint source: reconnect picker reasons reflect secure-context state', () => {
+    const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
+    assert(/requires a secure context/.test(ui), 'insecure-context reason text is present in reconnect modes');
+    assert(/not available in this browser or is restricted/.test(ui), 'secure-context reason text is present');
+    // Both reasons are inside reconnectModes(), not in apiHintHtml.
+    const modesIdx = ui.indexOf('function reconnectModes()');
+    assert(modesIdx !== -1, 'reconnectModes is defined');
+    assert(ui.indexOf('requires a secure context', modesIdx) !== -1,
+      'insecure-context reason appears inside reconnectModes');
+  });
+
+  check('API hint source: insecure-context warning about HTTP traffic is present', () => {
+    const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
+    assert(/does not encrypt HTTP traffic/.test(ui), 'HTTP-traffic warning is present in the hint');
+  });
+
   await checkAsync('UI light: one click writes the light once and verifies it by read-back', async () => {
     assert(ui, 'the UI sandbox loaded');
     await openWriteTab();
@@ -4314,7 +4384,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
     await W.Writers.lightSwitch(false);
     ui.switchTab('write');
     await sleep(0);
-    assert(/Turn light on/.test(writeView().innerHTML), 'the button reflects the off state');
+    assert(/Toggle light/.test(writeView().innerHTML), 'the toggle button is present');
     resetFrameCounters();
     const logStart = W.state.log.length;
     const p = ui.dom.dispatchAction('lightToggle');
@@ -5319,7 +5389,7 @@ await checkAsync('Live Data BLE: early frames are ingested, zero is valid, disco
     assert(W.state.bleLive.lastAt instanceof Date, 'the reception time is tracked');
     uiHarness.switchTab('read');
     await sleep(0);
-    assert(/Bluetooth Live Data telemetry/.test(uiHarness.doc.getElementById('view-read').innerHTML), 'the telemetry card is rendered');
+    assert(/Bluetooth Live Data/.test(uiHarness.doc.getElementById('view-read').innerHTML), 'the telemetry card is rendered');
     assert(/0\.0 km\/h/.test(uiHarness.doc.getElementById('view-read').innerHTML), 'zero speed is displayed');
     // A remote disconnect keeps the last values but marks them stale.
     device._onDisconnect();

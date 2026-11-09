@@ -98,9 +98,12 @@
     if (typeof navigator === 'undefined' || !navigator.bluetooth) {
       throw new Error('This browser does not support Web Bluetooth. Please use Chrome or Edge.');
     }
+    // Use the Live Data service UUID as the filter so the browser grants access
+    // to it directly. Listing it only in optionalServices while filtering on a
+    // different UUID (0xfe02) causes Chrome to silently drop notifications on
+    // some platforms.
     return navigator.bluetooth.requestDevice({
-      filters: [{ services: [0xfe02] }],
-      optionalServices: [LIVE_DATA_SERVICE_UUID],
+      filters: [{ services: [LIVE_DATA_SERVICE_UUID] }],
     });
   }
 

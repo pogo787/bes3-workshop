@@ -63,13 +63,11 @@ policy operation and no new engine writer: each changed port is a registry-bound
 (`NORMAL_TIER_OVERRIDE`), so — like the light and service controls — the staged
 batch needs no typed register-name confirmation; the one-shot grant, single
 write and independent read-back still apply. The Write Lab keeps the typed-name
-gate for every other `PORT` register. Unchanged ports
-are never written, and a value that was not read successfully is never guessed
-as off. A matching read-back does not prove that a port is physically enabled,
-that an accessory is wired correctly, or that the setting persists after a
-restart. A port whose freshly read payload already equals the requested payload
-is not staged, and a value that was not read successfully is never guessed as
-off. No hardware validation has been performed.
+gate for every other `PORT` register. A port whose freshly read payload already
+equals the requested payload is not staged, and a value that was not read
+successfully is never guessed as off. A matching read-back does not prove that a
+port is physically enabled, that an accessory is wired correctly, or that the
+setting persists after a restart. No hardware validation has been performed.
 
 ## Unknown / unread values
 
@@ -486,7 +484,7 @@ node tools/check-workshop-light.mjs
 
 Status (executed): Node.js **v24.22.1**. `node --check` passed for
 `write-policy.js`, `engine.js`, `ui.js` and this runner; the runner reported
-**222 passed, 0 failed, 0 skipped** (the policy/source checks plus the engine
+**228 passed, 0 failed, 0 skipped** (the policy/source checks plus the engine
 checks against the simulated transport); `git diff --check` was clean. One of the
 source checks validates the System ID card's experimental/untested wording at
 source level; it is not browser execution. This establishes the policy and the

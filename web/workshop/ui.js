@@ -250,6 +250,10 @@
       cadence: val('DriveUnit.AVERAGE_RIDER_CADENCE'),
       comps, modes, duId, rcId, idConflict,
       eShift: val('RemoteControl.E_SHIFT_AVAILABLE'),
+      ports: {
+        low: V('DriveUnit.LOW_POWER_PORT_ACTIVE'),
+        high: V('DriveUnit.HIGH_POWER_PORT_ACTIVE'),
+      },
       battery2: S.components.Battery2 ? {
         soc: val('Battery2.STATE_OF_CHARGE'), soh: val('Battery2.STATE_OF_HEALTH'),
         cycles: val('Battery2.NUMBER_OF_FULL_CHARGE_CYCLES'), remainingWh: val('Battery2.REMAINING_ENERGY'),
@@ -410,7 +414,7 @@
     }
     if (!W.isLive && hasData() && S.mode === 'file') {
       if (S.bleLive && S.bleLive.active) {
-        return `${unverifiedNote}<div class="notice conn-banner">${ICON.info}<div class="conn-banner__text"><strong>Live Data BLE telemetry active (${esc(S.bleLive.deviceName || 'Bosch eBike')}).</strong> Read-only. Use USB or MCSP for diagnostics and writes.</div></div>`;
+        return `${unverifiedNote}<div class="notice conn-banner">${ICON.info}<div class="conn-banner__text"><strong>Live Data BLE</strong> — ${esc(S.bleLive.deviceName || 'eBike')} · read-only telemetry. For diagnostics and configuration use USB or Bluetooth (MCSP).</div></div>`;
       }
       return `${unverifiedNote}<div class="notice conn-banner">${ICON.info}<div class="conn-banner__text"><strong>Not connected.</strong> You are viewing a saved readout. Connect the eBike via USB or Bluetooth for live values and configuration.</div><button class="btn btn--primary btn--sm" data-act="reconnect">Connect</button></div>`;
     }
@@ -422,57 +426,71 @@
     const v = S.bleLive.values || {};
     const has = (k) => Object.prototype.hasOwnProperty.call(v, k) && v[k] !== null && v[k] !== undefined;
     const yn = (b) => (b ? 'yes' : 'no');
-    const missing = 'not available';
     const items = [
-      ['Speed', has('speedKmh') ? Number(v.speedKmh).toFixed(1) + ' km/h' : missing],
-      ['Cadence', has('cadenceRpm') ? String(v.cadenceRpm) + ' rpm' : missing],
-      ['Rider power', has('riderPowerW') ? String(v.riderPowerW) + ' W' : missing],
-      ['Ambient brightness', has('ambientBrightnessLux') ? Number(v.ambientBrightnessLux).toFixed(1) + ' lux' : missing],
-      ['Battery SoC', has('batterySocPercent') ? String(v.batterySocPercent) + ' %' : missing],
-      ['Bike time (UTC)', has('timeUnixSeconds') ? new Date(Number(v.timeUnixSeconds) * 1000).toISOString() : missing],
-      ['Odometer', has('odometerMeters') ? (Number(v.odometerMeters) / 1000).toFixed(1) + ' km' : missing],
-      ['Bike light', has('bikeLight') ? String(v.bikeLight) : missing],
-      ['System locked', has('systemLocked') ? yn(v.systemLocked) : missing],
-      ['Charger connected', has('chargerConnected') ? yn(v.chargerConnected) : missing],
-      ['Light reserve', has('lightReserveState') ? yn(v.lightReserveState) : missing],
-      ['Diagnosis tool connected', has('diagnosisProgramActive') ? yn(v.diagnosisProgramActive) : missing],
-      ['Bike not driving', has('bikeNotDriving') ? yn(v.bikeNotDriving) : missing],
-    ];
-    const dl = items.map(([label, valStr]) => '<dt>' + esc(label) + '</dt><dd class="mono">' + esc(valStr) + '</dd>').join('');
-    const any = Object.keys(v).length > 0;
+      ['Speed',                 has('speedKmh')            ? Number(v.speedKmh).toFixed(1) + ' km/h'                                   : null],
+      ['Cadence',               has('cadenceRpm')          ? String(v.cadenceRpm) + ' rpm'                                             : null],
+      ['Rider power',           has('riderPowerW')         ? String(v.riderPowerW) + ' W'                                              : null],
+      ['Ambient brightness',    has('ambientBrightnessLux')? Number(v.ambientBrightnessLux).toFixed(1) + ' lux'                        : null],
+      ['Battery SoC',           has('batterySocPercent')   ? String(v.batterySocPercent) + ' %'                                        : null],
+      ['Bike time (UTC)',        has('timeUnixSeconds')     ? new Date(Number(v.timeUnixSeconds) * 1000).toISOString()                  : null],
+      ['Odometer',              has('odometerMeters')      ? (Number(v.odometerMeters) / 1000).toFixed(1) + ' km'                      : null],
+      ['Bike light',            has('bikeLight')           ? String(v.bikeLight)                                                       : null],
+      ['System locked',         has('systemLocked')        ? yn(v.systemLocked)                                                        : null],
+      ['Charger connected',     has('chargerConnected')    ? yn(v.chargerConnected)                                                    : null],
+      ['Light reserve',         has('lightReserveState')   ? yn(v.lightReserveState)                                                   : null],
+      ['Diagnosis tool active', has('diagnosisProgramActive')? yn(v.diagnosisProgramActive)                                            : null],
+      ['Bike not driving',      has('bikeNotDriving')      ? yn(v.bikeNotDriving)                                                      : null],
+    ].filter(([, val]) => val !== null);
     const active = !!S.bleLive.active;
-    let badge;
-    let status;
+    let badge, status, body;
     if (!active) {
       badge = '<span class="chip chip--warn">Stale</span>';
-      status = S.bleLive.lastAt ? `Disconnected. Last value: ${fmtDateTime(S.bleLive.lastAt)}.` : 'Disconnected. No value received.';
-    } else if (!any) {
-      badge = '<span class="chip chip--warn">Waiting for first value</span>';
-      status = 'Connected. No telemetry frame received yet.';
+      status = S.bleLive.lastAt ? `Disconnected · last frame ${fmtDateTime(S.bleLive.lastAt)}` : 'Disconnected. No frame received.';
+      body = items.length
+        ? '<dl class="kv">' + items.map(([l, val]) => '<dt>' + esc(l) + '</dt><dd class="mono">' + esc(val) + '</dd>').join('') + '</dl>'
+        : '<p class="field__hint" style="margin:0">No telemetry frames were received.</p>';
+    } else if (!items.length) {
+      badge = '<span class="chip chip--warn">Waiting…</span>';
+      status = 'Connected. Waiting for first telemetry frame.';
+      body = '<p class="field__hint" style="margin:0">Values will appear here as the bike sends them.</p>';
     } else {
       badge = '<span class="chip chip--ok">Live</span>';
-      status = S.bleLive.lastAt ? `Last value: ${fmtDateTime(S.bleLive.lastAt)}.` : '';
+      status = S.bleLive.lastAt ? `Last frame: ${fmtDateTime(S.bleLive.lastAt)}` : '';
+      body = '<dl class="kv">' + items.map(([l, val]) => '<dt>' + esc(l) + '</dt><dd class="mono">' + esc(val) + '</dd>').join('') + '</dl>';
     }
-    return '<div class="section" id="bleLiveSection"><div class="section__head"><div><h2 class="section__title">Bluetooth Live Data telemetry</h2>'
-      + '<p class="section__sub">Official Bosch eBike Live Data Interface (0000eb20-eaa2-11e9-81b4-2a2ae2dbcce4) · read-only</p>'
-      + (status ? `<p class="section__sub">${esc(status)}</p>` : '') + '</div>'
-      + badge + '</div><div class="card"><dl class="kv">' + dl + '</dl></div></div>';
+    return '<div class="section" id="bleLiveSection">'
+      + '<div class="section__head"><div>'
+      + '<h2 class="section__title">Bluetooth Live Data</h2>'
+      + (status ? `<p class="section__sub">${esc(status)}</p>` : '')
+      + '</div>' + badge + '</div>'
+      + '<div class="card" style="padding:var(--s4)">' + body + '</div>'
+      + '</div>';
   }
 
   function renderChrome() {
     const busy = S.mode === 'reading' || S.mode === 'connecting';
     const writing = !!W.busy;
+    const isBle = S.transportKind === 'ble-mcsp';
     const pill = $('connPill');
     let st = 'idle'; let txt = 'Not connected';
     if (S.mode === 'connecting') { st = 'busy'; txt = 'Connecting …'; }
     else if (S.mode === 'reading') { st = 'busy'; txt = 'Reading …'; }
     else if (S.demo && W.isLive) { st = 'demo'; txt = 'Demo · simulated'; }
-    else if (W.isLive) { st = 'live'; txt = S.transportKind === 'ble-mcsp' ? 'Connected (BLE)' : 'Connected'; }
+    else if (W.isLive) { st = 'live'; txt = isBle ? 'Connected (BLE, read-only)' : 'Connected'; }
     else if (S.bleLive && S.bleLive.active) { st = 'live'; txt = 'Live Data (BLE)'; }
     else if (S.connectionLost) { st = 'lost'; txt = 'Connection lost'; }
     else if (S.mode === 'file') { st = 'file'; txt = 'Saved readout'; }
     pill.dataset.state = st; $('connText').textContent = txt;
     $('tabs').hidden = !hasData();
+    // Disable the Configuration tab during a BLE MCSP session: the transport
+    // supports reading but writes are not available over BLE at this time.
+    const writeTab = document.querySelectorAll && document.querySelectorAll('.tab[data-tab="write"]')[0];
+    if (writeTab) {
+      writeTab.disabled = isBle;
+      writeTab.title = isBle ? 'Configuration is not available over Bluetooth. Connect via USB to write.' : '';
+      // If the user is already on the write tab and BLE connects, redirect them.
+      if (isBle && tab === 'write') { tab = 'read'; setTab('read'); }
+    }
     $('btnReread').hidden = !(W.isLive && hasData() && !busy && !writing);
     $('btnReread').disabled = busy || writing;
     const tr = $('btnTopReconnect'); if (tr) tr.hidden = W.isLive || !hasData() || busy;
@@ -716,7 +734,7 @@
           <div class="bike__main">
             <div>
               <div class="bike__brand">${esc(d.brand || 'Bosch Smart System')}${d.category ? ` · ${esc(d.category)}` : ''}</div>
-              <h1 class="bike__name">${esc(d.line || 'E-Bike')}</h1>
+              <h1 class="bike__name">${esc(d.line || 'eBike')}</h1>
               <p class="section__sub" style="margin-top:6px">Read on ${fmtDateTime(d.readAt)} · ${d.simulated ? 'demo data (simulated)' : d.source === 'file' ? 'from saved file' : 'live via USB'}</p>
             </div>
             <div class="bike__chips">
@@ -780,6 +798,9 @@
             <dt>Light configuration</dt><dd>${esc(lightConfigLabel(d.light.config))}</dd>
             <dt>Light power rating</dt><dd>${fmtW(d.light.powerW)}</dd>
             <dt>Light currently</dt><dd>${d.light.on == null ? '–' : d.light.on ? 'on' : 'off'}</dd></dl></div>
+          <div class="kv-group"><h4>Accessory power ports <span class="chip chip--warn" style="font-size:var(--text-xs);vertical-align:middle" title="Payload encoding not independently verified">Experimental</span></h4><dl class="kv">
+            <dt>Low Power Port</dt><dd>${d.ports.low ? (d.ports.low.status === 'ok' ? esc(portPayloadLabel(d.ports.low.hex || '')) : '–') : '–'}</dd>
+            <dt>High Power Port</dt><dd>${d.ports.high ? (d.ports.high.status === 'ok' ? esc(portPayloadLabel(d.ports.high.hex || '')) : '–') : '–'}</dd></dl></div>
           <div class="kv-group"><h4>Walk assist &amp; drivetrain</h4><dl class="kv">
             <dt>Walk assist enabled</dt><dd>${d.walk ? yesNo(d.walk.enabled) : '–'}</dd>
             <dt>Walk assist speed</dt><dd>${d.walk && d.walk.speed ? NF1.format(d.walk.speed) + ' km/h' : '–'}</dd>
@@ -823,9 +844,10 @@
 
   // ------------------------------------------------------------ WRITE view
   // Accessory power-port registers. Both are writable in the address registry
-  // and high-impact in the write policy, so each staged change needs the typed
-  // register-name confirmation. Their payload semantics are not independently
-  // verified; the card is explicitly experimental and untested.
+  // and deliberately normal-tier in the write policy (NORMAL_TIER_OVERRIDE), so
+  // the staged batch needs no typed register-name confirmation. Their payload
+  // semantics are not independently verified; the card is experimental and
+  // untested.
   const PORT_TARGETS = [
     { key: 'LOW', component: 'DriveUnit', name: 'LOW_POWER_PORT_ACTIVE', label: 'Low Power Port' },
     { key: 'HIGH', component: 'DriveUnit', name: 'HIGH_POWER_PORT_ACTIVE', label: 'High Power Port' },
@@ -867,6 +889,14 @@
     pendingLampConfirmed = false;
   }
   function pendingKey(step) { return step.component + '.' + step.name; }
+  const PENDING_TIER_LABEL = {
+    'dedicated':        'Verified',
+    'normal':           'Normal',
+    'high-impact':      'High impact',
+    'registry-readonly': 'Read-only in registry',
+    'unavailable-live': 'Unavailable live',
+    'blocked':          'Blocked',
+  };
   function pendingTier(step) {
     return step.op === 'GENERIC_WRITE' ? POLICY.genericTier(step.component, step.name).tier : 'dedicated';
   }
@@ -967,7 +997,7 @@
             <td class="mono">${esc(p.key)}<br><span class="muted">${esc(p.address)}</span></td>
             <td>${esc(p.oldDisplay)} <span class="arrow">→</span> <strong>${esc(p.newDisplay)}</strong></td>
             <td class="mono">${esc(p.bytes)}</td>
-            <td>${esc(p.tier)}</td>
+            <td>${esc(PENDING_TIER_LABEL[p.tier] || p.tier)}</td>
             <td>${esc(p.evidence)}</td>
             <td style="white-space:nowrap"><button class="btn btn--ghost btn--sm" data-pending-edit="${esc(p.key)}" ${p.op === 'GENERIC_WRITE' ? '' : 'disabled'}>Edit</button>
               <button class="btn btn--ghost btn--sm" data-pending-remove="${esc(p.key)}">Remove</button></td>
@@ -1326,7 +1356,6 @@
       powerW: l.powerW,              // read-only display; may be null (unknown)
       config: l.config,              // no invented default; may be null/0
       configTouched: false,
-      switchOn: false,               // explicit opt-in, initially off
       touched: false,
     };
   }
@@ -1334,10 +1363,11 @@
   function lightPlanResult() {
     const cur = summary().light;
     const dr = draft.light;
+    // Switching the light on or off is a direct action (planLightSwitch), not
+    // part of this staged plan, so no switchOn flag is passed here.
     const desired = {
       available: dr.available,
       availableTouched: dr.availableTouched,
-      switchOn: dr.switchOn,
       config: dr.config,
       configTouched: dr.configTouched,
       powerW: dr.powerW,
@@ -1353,7 +1383,6 @@
       {
         available: desired.available,
         availableTouched: desired.availableTouched,
-        switchOn: desired.switchOn,
         config: desired.config,
         configTouched: desired.configTouched,
         powerW: desired.powerW,
@@ -1371,7 +1400,14 @@
     throw new Error('Blocked operation: ' + op);
   }
   function lightSteps() {
-    return lightPlanResult().steps.map((s) => ({ label: s.label, bytes: s.bytes, op: s.op, component: s.component, name: s.name, address: s.address, value: s.value, run: runFor(s.op, s.value) }));
+    return lightPlanResult().steps.map((s) => ({
+      label: s.label, bytes: s.bytes, op: s.op, component: s.component,
+      name: s.name, address: s.address, value: s.value,
+      // Each light sub-step (switch, available, config, power) is independent.
+      // A failed read-back on one must not prevent the others from running.
+      continueOnFailure: true,
+      run: runFor(s.op, s.value),
+    }));
   }
 
   function requireAuthorized() {
@@ -1481,7 +1517,7 @@
       // register must never follow it.
       draft.advanced.target = genericTargetKey(advEntry);
       draft.advanced.payload = '';
-      }
+    }
     if (!advEntry) draft.advanced.target = '';
     const advUnreadable = !!advEntry && !entryReadable(advEntry);
     const advCur = advEntry ? S.values[genericTargetKey(advEntry)] : null;
@@ -1560,7 +1596,10 @@
       </div>
     </details>`;
 
+    const isBle = S.transportKind === 'ble-mcsp';
+
     el.innerHTML = `${connBanner()}
+      ${isBle ? `<div class="notice notice--warn conn-banner" role="alert">${ICON.warn}<div class="conn-banner__text"><strong>Bluetooth connection — read-only.</strong> Configuration writes are not available over Bluetooth. To make changes, disconnect and reconnect via USB.</div></div>` : ''}
       ${demoNote ? `<div class="section" style="display:grid;gap:12px">${demoNote}</div>` : ''}
       ${authNotice}
       ${pendingPanel()}
@@ -1595,7 +1634,9 @@
               </div>
               ${d.light.on == null
                 ? `<button class="btn btn--ghost btn--sm" data-act="lightRefresh" ${(W.isLive || S.demo) ? '' : 'disabled'}>Refresh light state</button>`
-                : `<button class="btn btn--primary btn--sm" data-act="lightToggle" ${canEdit && !lightActionBusy ? '' : 'disabled'}>${d.light.on ? 'Turn light off' : 'Turn light on'}</button>`}
+                : d.light.available === true
+                  ? `<button class="btn btn--primary btn--sm" data-act="lightToggle" ${canEdit && !lightActionBusy ? '' : 'disabled'}>Toggle light</button>`
+                  : `<span class="field__hint">Enable light output above to use the switch.</span>`}
             </div>
 
             <details ${dr.available ? 'open' : 'hidden'}>
@@ -2012,13 +2053,20 @@
 
   // Power ports: a read-only refresh and the staged enable/disable changes.
   // No new writer or policy operation is introduced: each changed port is
-  // staged as a registry-bound GENERIC_WRITE step, which keeps the high-impact
-  // typed-name gate, the one-shot grant, the single write and the read-back.
+  // staged as a registry-bound GENERIC_WRITE step, which keeps the one-shot
+  // grant, the single write and the read-back. The two port registers are
+  // normal-tier, so there is no typed-name gate.
+  // Human-readable label for a port register payload. 08 01 = on, 08 00 or
+  // empty = off. Used in both the Overview and the Configuration card.
+  function portPayloadLabel(hex) {
+    if (hex === '08 01') return 'on';
+    if (!hex || hex === '08 00') return 'off';
+    return hex;
+  }
   function portCurrent(t) {
     const cur = V(t.component + '.' + t.name);
     if (!cur || cur.status !== 'ok') return 'not read';
-    const hex = cur.hex || '';
-    return hex ? `raw ${hex}` : 'empty payload';
+    return portPayloadLabel(cur.hex || '');
   }
   // A port whose freshly read payload already equals the requested payload is
   // not staged: this card, like the light card, never writes an unchanged value.
@@ -2056,6 +2104,18 @@
   }
   async function applyPorts() {
     if (!requireAuthorized()) return;
+    // Auto-read any port whose state is not yet known — the user should not
+    // have to click the Read button separately before staging a change.
+    const unknown = PORT_TARGETS.filter((t) => {
+      const cur = V(t.component + '.' + t.name);
+      return draft.ports[t.key] !== 'unchanged' && (!cur || cur.status !== 'ok');
+    });
+    if (unknown.length) {
+      for (const t of unknown) {
+        try { await W.readKey(t.component, t.name); } catch (_) { /* stay unknown; portReasons will block */ }
+      }
+      renderWrite();
+    }
     const reasons = portReasons();
     if (reasons.length) {
       await modal({ title: 'Cannot stage', body: `<p>${esc(reasons.join(' · '))}</p>`, actions: [{ label: 'OK', value: true, cls: 'btn--primary' }] });
@@ -2079,6 +2139,9 @@
         intended: `raw ${v.hex}`, value: v.hex,
         currentDisplay: cur && cur.status === 'ok' ? (cur.hex || '(empty)') : 'not read',
         portLabel: t.label,
+        // Port register encoding is unverified; a mismatched read-back must
+        // not block the remaining ports from being written.
+        continueOnFailure: true,
         run: (owner) => W.Writers.generic(t.component, t.name, v.bytes, owner),
       });
     }
@@ -2187,18 +2250,41 @@
     if (!requireAuthorized()) return;
     if (W.busy) { toast('Another write is running'); return; }
     const cur = summary().light;
+    if (cur.available !== true) { toast('Light output is not enabled — use the Enable light output toggle first'); return; }
     if (cur.on == null) { toast('Light state unknown — refresh it first'); return; }
     lightSwitchBusy = true;
     try {
       const on = !cur.on;
-      const step = {
-        label: on ? 'Switch light on' : 'Switch light off',
-        bytes: on ? '08 01' : '(empty)',
-        op: 'LIGHT_SWITCH', component: 'DriveUnit', name: 'BIKE_LIGHT',
-        address: W.util.addrOf('DriveUnit', 'BIKE_LIGHT'), value: on,
-        run: (owner) => W.Writers.lightSwitch(on, owner),
-      };
-      await runStepsModal(on ? 'Turning the light on' : 'Turning the light off', [step],
+      let steps;
+      if (on) {
+        // Turning ON: a direct BIKE_LIGHT write works on all firmware.
+        const plan = POLICY.planLightSwitch(false); // planLightSwitch(currentOn=false) → turn on
+        steps = [{ ...plan.steps[0], run: (owner) => W.Writers.lightSwitch(true, owner) }];
+      } else {
+        // Turning OFF: some BRC3100 firmware versions silently ignore
+        // BIKE_LIGHT=false while BIKE_LIGHT_AVAILABLE is true. The reliable
+        // mechanism is: disable availability (physically cuts the output and
+        // clears BIKE_LIGHT), then immediately re-enable it so the port stays
+        // installed. Net result: BIKE_LIGHT=off, BIKE_LIGHT_AVAILABLE=true.
+        const availAddr = W.util.addrOf('DriveUnit', 'BIKE_LIGHT_AVAILABLE');
+        steps = [
+          {
+            label: 'Toggle light (disable output)', bytes: '08 00',
+            op: 'LIGHT_AVAILABLE', component: 'DriveUnit', name: 'BIKE_LIGHT_AVAILABLE',
+            address: availAddr, value: false,
+            continueOnFailure: false,
+            run: (owner) => W.Writers.lightAvailable(false, owner),
+          },
+          {
+            label: 'Keep light port installed', bytes: '08 01',
+            op: 'LIGHT_AVAILABLE', component: 'DriveUnit', name: 'BIKE_LIGHT_AVAILABLE',
+            address: availAddr, value: true,
+            continueOnFailure: true,
+            run: (owner) => W.Writers.lightAvailable(true, owner),
+          },
+        ];
+      }
+      await runStepsModal('Toggle light', steps,
         () => (S.demo ? 'The simulated light was re-read and matches.' : 'The light state was re-read and matches.'),
         W.authorizationToken);
     } finally {
@@ -2263,6 +2349,8 @@
       return;
     }
     const token = W.authorizationToken;
+    // Snapshot pending after all prompts so a row staged during typedBatchPrompt
+    // is not silently cleared by the applied-set removal below.
     const steps = pending.map((p) => p.step);
     const results = await runStepsModal(`Applying ${steps.length} change${steps.length === 1 ? '' : 's'}`, steps, () => (
       S.demo ? 'The simulated bike matched every staged value.' : 'Every staged value was re-read from the eBike and matched.'
@@ -2384,14 +2472,22 @@
     }
     lis().forEach((li, i) => { if (i >= results.length) { li.dataset.s = 'skip'; li.querySelector('.res').textContent = 'skipped'; } });
     const allOk = !planError && results.length === steps.length && results.every((r) => r.applied);
+    const someOk = !planError && results.some((r) => r.applied);
     const failed = results.find((r) => !r.applied);
+    // "No further steps were sent" is only accurate when the batch actually
+    // stopped on the failure. If the step declared continueOnFailure the batch
+    // kept going, so omit that clause.
+    const failedStep = failed ? steps[results.indexOf(failed)] : null;
+    const batchStopped = !failedStep || !failedStep.continueOnFailure;
     const okHead = S.demo ? 'Confirmed in simulation.' : 'Confirmed by read-back.';
     const okTail = S.demo ? 'The simulated bike matched every requested value.' : 'Every value was re-read from the eBike and matched.';
-    $('runResult').innerHTML = planError
+    const partialTail = someOk ? ` ${results.filter((r) => r.applied).length} of ${results.length} step${results.length === 1 ? '' : 's'} confirmed by read-back.` : '';
+    const runResult = $('runResult');
+    if (runResult) runResult.innerHTML = planError
       ? `<div class="notice notice--bad">${ICON.warn}<div><strong>Nothing was written.</strong> ${esc(planError)}</div></div>`
       : allOk
         ? `<div class="notice notice--ok">${ICON.check}<div><strong>${okHead}</strong> ${esc(successText() || okTail)}</div></div>`
-        : `<div class="notice notice--bad">${ICON.warn}<div><strong>${failed && failed.declined ? 'Declined:' : failed && failed.sessionChanged ? 'Session changed:' : failed && failed.blocked ? 'Blocked:' : failed && failed.interrupted ? 'Unverified:' : 'Not confirmed:'}</strong> ${esc(failed ? failed.label : '')}. ${failed && failed.blocked ? esc(failed.error || 'Experimental writes are not enabled.') : failed && failed.interrupted ? esc(failed.reason || 'The session changed during the write, so the result is unverified.') : failed && failed.acked ? `The eBike acknowledged the write${failed.ackStatus && failed.ackStatus !== 'SUCCESS' ? ' (' + esc(failed.ackStatus) + ')' : ''}, but re-reading did not confirm the value. Acknowledgment alone is not proof of application.` : `The bike did not acknowledge the write${failed && failed.ackStatus ? ' (' + esc(failed.ackStatus) + ')' : ''} and the read-back did not confirm the value, so whether the eBike applied it is unknown.`} ${failed && failed.interrupted && failed.transmitted === false ? '' : 'No further steps were sent.'} See the session log for details.</div></div>`;
+        : `<div class="notice notice--bad">${ICON.warn}<div><strong>${failed && failed.declined ? 'Declined:' : failed && failed.sessionChanged ? 'Session changed:' : failed && failed.blocked ? 'Blocked:' : failed && failed.interrupted ? 'Unverified:' : 'Not confirmed:'}</strong> ${esc(failed ? failed.label : '')}. ${failed && failed.blocked ? esc(failed.error || 'Experimental writes are not enabled.') : failed && failed.interrupted ? esc(failed.reason || 'The session changed during the write, so the result is unverified.') : failed && failed.acked ? `The eBike acknowledged the write${failed.ackStatus && failed.ackStatus !== 'SUCCESS' ? ' (' + esc(failed.ackStatus) + ')' : ''}, but re-reading did not confirm the value. Acknowledgment alone is not proof of application.` : `The bike did not acknowledge the write${failed && failed.ackStatus ? ' (' + esc(failed.ackStatus) + ')' : ''} and the read-back did not confirm the value, so whether the eBike applied it is unknown.`}${batchStopped ? ' No further steps were sent.' : partialTail} See the session log for details.</div></div>`;
     const btn = $('runClose'); if (btn) { btn.disabled = false; btn.textContent = 'Done'; }
     const cancelBtn = $('runCancel'); if (cancelBtn) cancelBtn.remove();
     toast(allOk ? (S.demo ? 'Confirmed in simulation' : 'Confirmed by read-back') : (planError ? 'Nothing was written' : failed && failed.declined ? 'Write declined — nothing sent' : failed && failed.sessionChanged ? 'Blocked — session changed' : failed && failed.blocked ? 'Blocked — not authorized' : 'Change not confirmed'));
@@ -2485,9 +2581,26 @@
         <p class="field__hint" style="margin:6px 0 0">Full JSON and debug log contain identifiers and raw payload bytes. "Anonymise identifiers" masks them, reduces probe rows and removes payload/read-back bytes. The anonymised JSON can still be opened.</p>
       </div>
       <div class="card table-wrap">${rows ? `<table class="t"><thead><tr><th>Time</th><th>Action</th><th>Sent</th><th>Before → After</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="muted" style="padding:8px 4px">No changes in this session yet.</p>'}</div>
-    </div>${renderLogHistory()}`;
+    </div>${renderLogHistory()}
+    <div class="section">
+      <details id="debugLogDetails" class="card" style="padding:0">
+        <summary style="padding:var(--s4);cursor:pointer;font-weight:600;list-style:none;display:flex;align-items:center;gap:var(--s2)">${ICON.info} Debug log (protocol trace)</summary>
+        <div style="padding:0 var(--s4) var(--s4)">
+          <p class="field__hint" style="margin:0 0 var(--s2)">Raw connection and write events since page load. Contains serial numbers and payload bytes. Select all to copy, or use Download above.</p>
+          <pre id="debugLogPre" class="debug-log-pre"></pre>
+        </div>
+      </details>
+    </div>`;
     const anon = $('exportAnon');
     if (anon) anon.onchange = () => { exportOpts.anonymize = anon.checked; };
+    const details = $('debugLogDetails');
+    if (details) details.addEventListener('toggle', () => {
+      if (!details.open) return;
+      const pre = $('debugLogPre');
+      if (pre && window.Bes3DebugLog && window.Bes3DebugLog.getText) {
+        pre.textContent = window.Bes3DebugLog.getText({ anonymize: exportOpts.anonymize });
+      }
+    });
   }
 
   // ------------------------------------------------------------ modal & toast
@@ -2507,7 +2620,7 @@
     return new Promise((resolve) => {
       const state = { resolve, onClose, actions };
       modalStack.open(state);
-      if (!modalPreviousFocus) modalPreviousFocus = document.activeElement;
+      if (!modalPreviousFocus) modalPreviousFocus = (document.activeElement && document.activeElement.id) || document.activeElement;
       $('modalTitle').textContent = title;
       $('modalBody').innerHTML = body;
       $('modalActions').innerHTML = actions.map((a, i) => `<button class="btn ${a.cls || 'btn--ghost'}" data-i="${i}" ${a.id ? `id="${a.id}"` : ''} ${a.disabled ? 'disabled' : ''}>${esc(a.label)}</button>`).join('');
@@ -2516,8 +2629,13 @@
         if (!modalStack.close(state, v)) return;
         $('modal').hidden = true;
         // The focus goes back to the control that opened the dialog.
-        const back = modalPreviousFocus;
+        const backRef = modalPreviousFocus;
         modalPreviousFocus = null;
+        // Re-query by id so focus returns correctly even if the opener was
+        // re-rendered while the modal was open.
+        const back = typeof backRef === 'string' && backRef
+          ? document.getElementById(backRef)
+          : (backRef && backRef.focus ? backRef : null);
         if (back && back.focus && document.contains(back)) back.focus();
       };
       // Escape uses the same local close as the action buttons, so it also
@@ -2544,10 +2662,12 @@
     }
     if (e.key === 'Escape') {
       const b = $('modalActions').querySelector('button:not([disabled])');
-      // Escape closes a modal that offers a cancel action. Use the local close
-      // so the dialog is hidden, focus is restored and onClose stops the
-      // remaining batch steps.
-      if (b && cur.actions[Number(b.dataset.i)].value === false && typeof cur.close === 'function') cur.close(false);
+      // Escape closes a modal that offers a cancel action, or any single-button
+      // modal (e.g. "Connection failed", "Action failed") regardless of value.
+      if (typeof cur.close === 'function') {
+        if (cur.actions.length === 1) { cur.close(cur.actions[0].value); return; }
+        if (b && cur.actions[Number(b.dataset.i)].value === false) cur.close(false);
+      }
       return;
     }
     if (e.key !== 'Tab') return;
@@ -2693,22 +2813,93 @@
   let lastConnectMethod = 'usb';
   let connectAttemptInProgress = false;
 
+  // API availability is stable for the lifetime of the page: isSecureContext
+  // never changes. hasUsb / hasBt are read live so tests that mutate navigator
+  // see the current state; in production the values are equally stable.
+  const API_SECURE = typeof window !== 'undefined' ? !!window.isSecureContext : true;
+  function apiAvail() {
+    const nav = typeof navigator !== 'undefined' ? navigator : {};
+    return { hasUsb: !!nav.usb, hasBt: !!nav.bluetooth, secure: API_SECURE };
+  }
+
+  // Returns an HTML notice string explaining why a browser API is unavailable,
+  // or '' when it is available. apiName is 'usb' or 'bt'.
+  function apiHintHtml(apiName) {
+    const available = apiName === 'usb' ? apiAvail().hasUsb : apiAvail().hasBt;
+    if (available) return '';
+    const apiLabel = apiName === 'usb' ? 'WebUSB' : 'Web Bluetooth';
+    const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
+    const flagUrl = 'edge://flags/#unsafely-treat-insecure-origin-as-secure';
+    if (!apiAvail().secure) {
+      return `<div class="notice notice--warn api-hint" role="note">
+        ${ICON.warn}
+        <div>
+          <strong>${apiLabel} is not available on this page.</strong>
+          Browser APIs for USB and Bluetooth require a <em>secure context</em> (HTTPS or
+          localhost). This page was loaded over an insecure origin, so the browser
+          has disabled those APIs.
+          <br><strong>Recommended fix:</strong> serve this page over HTTPS.
+          <br>For local development or testing in Microsoft Edge only, you can add a
+          temporary exception:
+          <ol>
+            <li>Open <span class="mono" style="user-select:all">${esc(flagUrl)}</span>
+              <button class="btn btn--ghost btn--sm" data-act="copyApiHintEdgeUrl" data-copy="${esc(flagUrl)}" aria-label="Copy Edge flags address">Copy</button></li>
+            <li>Enable <strong>Insecure origins treated as secure</strong>.</li>
+            <li>Add this page's exact origin:
+              <div class="api-hint__copy">
+                <span class="api-hint__val" id="apiHintOrigin">${esc(origin || '(origin not available)')}</span>
+                <button class="btn btn--ghost btn--sm" data-act="copyApiHintOrigin" aria-label="Copy current origin">Copy</button>
+              </div>
+            </li>
+            <li>Restart Edge and reopen this page.</li>
+          </ol>
+          <p style="margin-top:var(--s2);font-size:var(--text-xs)"><strong>Note:</strong>
+          This exception does not encrypt HTTP traffic. Only use it for trusted
+          development or testing origins.</p>
+        </div>
+      </div>`;
+    }
+    return `<div class="notice api-hint" role="note">
+      ${ICON.info}
+      <div>
+        <strong>${apiLabel} is not available in this browser.</strong>
+        The browser or platform may not support this API, or a browser or
+        organisation policy may restrict it. No action is available here.
+        <br>If you expect support, check that you are using a recent version of
+        Chrome or Edge on Windows, macOS or Linux.
+      </div>
+    </div>`;
+  }
+
   // The three real transports. Reconnect never invents another mode and never
   // falls back silently: an unavailable mode is shown with the reason.
   function reconnectModes() {
-    const hasUsb = typeof navigator !== 'undefined' && !!navigator.usb;
-    const hasBt = typeof navigator !== 'undefined' && !!navigator.bluetooth;
+    const hasUsb = apiAvail().hasUsb;
+    const hasBt  = apiAvail().hasBt;
     return [
-      { id: 'usb', label: 'USB', available: hasUsb, reason: 'WebUSB is not available in this browser.' },
+      {
+        id: 'usb', label: 'USB', available: hasUsb,
+        reason: hasUsb ? '' : (apiAvail().secure
+          ? 'WebUSB is not available in this browser or is restricted by a policy.'
+          : 'WebUSB requires a secure context (HTTPS). This page was loaded over an insecure origin.'),
+      },
       {
         id: 'ble-mcsp', label: 'Bluetooth (MCSP)',
         available: hasBt && !!(window.Bes3BleMcsp && window.Bes3BleMcsp.requestMcspDevice),
-        reason: hasBt ? 'The MCSP transport module is not loaded.' : 'Web Bluetooth is not available in this browser.',
+        reason: !hasBt
+          ? (apiAvail().secure
+              ? 'Web Bluetooth is not available in this browser or is restricted by a policy.'
+              : 'Web Bluetooth requires a secure context (HTTPS). This page was loaded over an insecure origin.')
+          : 'The MCSP transport module is not loaded.',
       },
       {
         id: 'ble-live', label: 'Bluetooth (Live Data, read-only)',
         available: hasBt && !!(window.Bes3LiveDataBle && window.Bes3LiveDataBle.requestLiveDataDevice),
-        reason: hasBt ? 'The Live Data transport module is not loaded.' : 'Web Bluetooth is not available in this browser.',
+        reason: !hasBt
+          ? (apiAvail().secure
+              ? 'Web Bluetooth is not available in this browser or is restricted by a policy.'
+              : 'Web Bluetooth requires a secure context (HTTPS). This page was loaded over an insecure origin.')
+          : 'The Live Data transport module is not loaded.',
       },
     ];
   }
@@ -2721,10 +2912,15 @@
     let selected = modes.some((m) => m.id === lastConnectMethod && m.available)
       ? lastConnectMethod
       : (firstAvailable ? firstAvailable.id : '');
-    const rows = modes.map((m) => `<label class="opt" style="cursor:${m.available ? 'pointer' : 'not-allowed'};${m.available ? '' : 'opacity:.55'}">
-      <input type="radio" name="reconnect-mode" value="${esc(m.id)}" ${m.id === selected ? 'checked' : ''} ${m.available ? '' : 'disabled'}>
-      <div><div class="opt__t">${esc(m.label)}</div>${m.available ? '' : `<div class="opt__d">${esc(m.reason)}</div>`}</div>
-    </label>`).join('');
+    const rows = modes.map((m) => {
+      const bleNote = m.id === 'ble-mcsp' && m.available
+        ? `<div class="opt__d" style="margin-top:4px">Read-only — Configuration writes are not available over Bluetooth. Pair the eBike in OS Bluetooth settings first for best results.</div>`
+        : '';
+      return `<label class="opt" style="cursor:${m.available ? 'pointer' : 'not-allowed'};${m.available ? '' : 'opacity:.55'}">
+        <input type="radio" name="reconnect-mode" value="${esc(m.id)}" ${m.id === selected ? 'checked' : ''} ${m.available ? '' : 'disabled'}>
+        <div><div class="opt__t">${esc(m.label)}</div>${m.available ? bleNote : `<div class="opt__d">${esc(m.reason)}</div>`}</div>
+      </label>`;
+    }).join('');
     const actions = [
       { label: 'Cancel', value: false, cls: 'btn--ghost' },
       { label: 'Connect', value: true, cls: 'btn--primary', id: 'reconnectGo', disabled: !selected },
@@ -2871,6 +3067,14 @@
           const u = URL.createObjectURL(blob); const link = document.createElement('a');
           link.href = u; link.download = `bes3-workshop-${Date.now()}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(u), 1000);
         }
+        else if (a === 'copyApiHintOrigin') {
+          const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
+          await copyToClipboard(origin, 'Origin');
+        }
+        else if (a === 'copyApiHintEdgeUrl') {
+          const url = t.dataset.copy || 'edge://flags/#unsafely-treat-insecure-origin-as-secure';
+          await copyToClipboard(url, 'Edge flags address');
+        }
       }
     } catch (err) {
       // A failed action must never leave an unhandled rejection behind: the
@@ -2934,8 +3138,16 @@
     document.documentElement.setAttribute('data-theme', n);
     try { localStorage.setItem('bes3-workshop-theme', n); } catch (_) { /* ignore */ }
   };
-  if (!navigator.usb) { $('usbWarn').hidden = false; $('btnConnect').disabled = true; }
-  if (!navigator.bluetooth) {
+  // Inject API availability hints into the start view. These are computed once
+  // (API presence and isSecureContext are stable for the page lifetime).
+  (function () {
+    const hintUsb = $('apiHintUsb');
+    const hintBt  = $('apiHintBt');
+    if (hintUsb) hintUsb.innerHTML = apiHintHtml('usb');
+    if (hintBt)  hintBt.innerHTML  = apiHintHtml('bt');
+  }());
+  if (!apiAvail().hasUsb) { $('btnConnect').disabled = true; }
+  if (!apiAvail().hasBt) {
     if (btnBle) btnBle.disabled = true;
     if (btnBleLive) btnBleLive.disabled = true;
   }

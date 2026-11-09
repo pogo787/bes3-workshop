@@ -21,7 +21,7 @@
   // the minor number for features and the patch number for fixes; keep the top
   // entry of docs/CHANGELOG.md in step (a source check enforces this). The
   // engine and UI read this from the policy object.
-  const VERSION = { version: '0.51.1', date: '2026-11-08' };
+  const VERSION = { version: '0.51.11', date: '2026-11-09' };
 
   // Every operation is experimental and carries an evidence label:
   //   observed-working  — a change was observed on at least one real bike
@@ -109,7 +109,7 @@
 
   function bytesFor(opId, value) {
     // Display-only preview of the payload; execution uses the engine encoders.
-    if (opId === 'LIGHT_SWITCH' || opId === 'LIGHT_AVAILABLE') return value ? '08 01' : '(empty)';
+    if (opId === 'LIGHT_SWITCH' || opId === 'LIGHT_AVAILABLE') return value ? '08 01' : '08 00';
     if (opId === 'LIGHT_CONFIG') return value ? ('08 0' + value) : '(empty)';
     if (opId === 'LIGHT_POWER') {
       const r = validateLightPower(value);

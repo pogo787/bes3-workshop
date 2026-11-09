@@ -208,7 +208,7 @@
       'BIKE_LIGHT_CONFIGURATION', 'BIKE_LIGHT_CONFIGURATION_OEM', 'BIKE_LIGHT_POWER', 'POWER_ON_TIME',
       'POWER_ON_TIME_WITH_MOTOR_SUPPORT', 'BIKE_CATEGORY', 'START_ASSIST_MODE_CONFIGURATION', 'TUNING_DETECTION',
       'PRESENT_PCB_TEMPERATURE', 'AVERAGE_RIDER_CADENCE', 'ASSIST_MODE_SHORT_NAMES', 'ASSIST_MODE_COLORS',
-      'ACTIVE_ASSIST_MODES'],
+      'ACTIVE_ASSIST_MODES', 'LOW_POWER_PORT_ACTIVE', 'HIGH_POWER_PORT_ACTIVE'],
     Battery: ['PRODUCT_NAME', 'PRODUCT_CODE', 'PART_NUMBER', 'SERIAL_NUMBER', 'SOFTWARE_VERSION', 'STATE_OF_CHARGE',
       'STATE_OF_HEALTH', 'PRESENT_CELL_VOLTAGE', 'NUMBER_OF_FULL_CHARGE_CYCLES', 'DELIVERED_WH_OVER_LIFETIME',
       'MINIMUM_PACK_TEMPERATURE', 'MAXIMUM_PACK_TEMPERATURE', 'REMAINING_ENERGY', 'PRESENT_PACK_TEMPERATURE',
@@ -379,6 +379,7 @@
     removeUsbDisconnectListener();
     try { if (transport && transport.close) transport.close().catch(() => {}); } catch (_) { /* ignore */ }
     transport = null;
+    state.transportKind = null;
     state.live = false;
     state.demo = false;
     state.simulatedExport = false;
@@ -886,7 +887,7 @@
     }
 
     await sleep(state.demo ? 200 : 500);
-    await scanIssues();
+    await scanIssues(ctx);
     const afterCount = (state.issues || []).length;
     const applied = beforeCount === 0 ? true : afterCount === 0;
     const step = {
@@ -1076,15 +1077,26 @@
         return step;
       }
 
-      await sleep(state.demo ? 250 : 700);
+      await sleep(state.demo ? 250 : state.transportKind === 'ble-mcsp' ? 1500 : 700);
       if (!ctxCurrent(ctx)) return interrupted(true, write.acked);
       let after = await readKeyInContext(component, name, ctx);
       if (after === null || !ctxCurrent(ctx)) return interrupted(true, write.acked);
       let applied = after.status === 'ok' && expect(after.value, after) === true;
       if (!applied && write.acked) {
-        // A second look — the drive unit sometimes needs a moment. This is a
-        // read-back only; the write itself is never retransmitted.
-        await sleep(900);
+        // A second look — the drive unit sometimes needs a moment to update a
+        // readable register. BLE adds extra GATT round-trip latency, so the
+        // second-look gap is longer on that transport. The write itself is
+        // never retransmitted.
+        await sleep(state.transportKind === 'ble-mcsp' ? 1500 : 900);
+        if (!ctxCurrent(ctx)) return interrupted(true, write.acked);
+        after = await readKeyInContext(component, name, ctx);
+        if (after === null || !ctxCurrent(ctx)) return interrupted(true, write.acked);
+        applied = after.status === 'ok' && expect(after.value, after) === true;
+      }
+      if (!applied && write.acked && state.transportKind === 'ble-mcsp') {
+        // Third look for BLE: some registers take longer to persist over the
+        // GATT round-trip. The write itself is still never retransmitted.
+        await sleep(2000);
         if (!ctxCurrent(ctx)) return interrupted(true, write.acked);
         after = await readKeyInContext(component, name, ctx);
         if (after === null || !ctxCurrent(ctx)) return interrupted(true, write.acked);
@@ -1119,7 +1131,11 @@
 
   const Writers = {
     lightAvailable(on, owner) {
-      return writeVerified('DriveUnit', 'BIKE_LIGHT_AVAILABLE', encodeBoolArg(on), (v) => v === on,
+      // Use explicit [0x08, 0x00] for false rather than the proto3 implicit empty
+      // payload: some drive unit firmware versions do not act on the implicit
+      // default and require the field to be present on the wire.
+      const payload = on ? [0x08, 0x01] : [0x08, 0x00];
+      return writeVerified('DriveUnit', 'BIKE_LIGHT_AVAILABLE', payload, (v) => v === on,
         on ? 'Mark bike light as installed' : 'Mark bike light as not installed', owner);
     },
     lightConfiguration(v, owner) {
@@ -1140,7 +1156,11 @@
         `Set bike light power to ${(raw / 10).toFixed(1)} W`, owner);
     },
     lightSwitch(on, owner) {
-      return writeVerified('DriveUnit', 'BIKE_LIGHT', encodeBoolArg(on), (v) => v === on,
+      // Use explicit [0x08, 0x00] for false rather than the proto3 implicit empty
+      // payload: some drive unit firmware versions do not act on the implicit
+      // default and require the field to be present on the wire.
+      const payload = on ? [0x08, 0x01] : [0x08, 0x00];
+      return writeVerified('DriveUnit', 'BIKE_LIGHT', payload, (v) => v === on,
         on ? 'Switch bike light on' : 'Switch bike light off', owner);
     },
     serviceDue({ timestamp, odometer }, owner) {
@@ -1287,7 +1307,7 @@
         try { r = await steps[i].run(owner); } catch (err) { r = { applied: false, error: err.message, label: steps[i].label, blocked: err.code === 'WRITE_BLOCKED', acked: false }; }
         results.push(r);
         onStep && onStep({ index: i, phase: 'done', step: steps[i], result: r });
-        if (!r.applied) break;
+        if (!r.applied && !steps[i].continueOnFailure) break;
       }
     } finally {
       guard.release(owner);
@@ -1538,15 +1558,18 @@
     };
     try {
       await nextLive.connect();
-      // Publish the session and reset the readout before notifications start.
-      // The old code assigned `state.bleLive` after subscribing, so the first
-      // telemetry frame was dropped by the callback's guard.
+      // Publish the session and reset the readout before notifications start:
+      // the notification callback ignores frames until state.bleLive points at
+      // this session, so subscribing first would drop the first telemetry frame.
       state.values = {};
       state.assistModes = [];
       state.issues = [];
       state.issuesScanned = false;
       state.issuesTruncated = false;
       state.bleLive = session;
+      archiveSessionLog();
+      state.log = [];
+      state.log.push(versionLogEntry());
       liveBleTransport = nextLive;
       if (device && device.addEventListener) {
         connectedBleDevice = device;

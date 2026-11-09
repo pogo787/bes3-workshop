@@ -6,6 +6,198 @@ single source of truth; every commit that changes behaviour bumps that version
 and adds an entry here, newest first. The top entry below must match
 `POLICY.VERSION` (a source check enforces this).
 
+## 0.51.11 — 2026-11-09
+
+- **fix(ui):** Light switch button renamed to "Toggle light" and modal title
+  changed to "Toggle light". The operation does not reliably set the light to
+  a specific state on all firmware — it toggles via an AVAILABLE bounce — so
+  directional labels ("Turn light on/off") were misleading.
+
+## 0.51.10 — 2026-11-09
+
+- **fix(ui):** "Turn light off" now uses a reliable two-step sequence on all
+  firmware: write `BIKE_LIGHT_AVAILABLE=false` (physically cuts the output and
+  clears `BIKE_LIGHT`), then immediately write `BIKE_LIGHT_AVAILABLE=true`
+  (re-enables the port as installed). The net result — light off, port still
+  installed — is confirmed from two debug logs: a direct `BIKE_LIGHT=08 00`
+  write is silently ignored by the BRC3100 firmware while AVAILABLE=true, but
+  the AVAILABLE toggle always works. "Turn light on" still uses the direct
+  `BIKE_LIGHT=true` write, which works on all tested firmware.
+- **fix(ui):** Power port registers now show "on" for payload `08 01` and "off"
+  for `08 00` / empty in both the Overview table and the Configuration card's
+  "currently" label. Raw hex is no longer shown as the primary display.
+
+## 0.51.9 — 2026-11-09
+
+- **fix(engine/policy):** Light switch and light-available writers now send
+  explicit `08 00` (proto3 field-1 varint zero) for the false/off state instead
+  of an empty payload (proto3 implicit default). Both encodings are
+  semantically identical in proto3, but some Bosch drive unit firmware versions
+  require the field to be present on the wire and silently ignore the implicit
+  empty payload. The write frame for "off" changes from `30 05 …` (5 bytes,
+  no payload) to `30 07 … 08 00` (7 bytes, explicit zero). The read-back
+  verification, approval check, and all safety gates are unaffected.
+- **feat(ui, debug-log):** The debug log (protocol trace) is now available
+  inline on the Session Log tab as a collapsible "Debug log" section, in
+  addition to the existing download button. Opening the section renders the
+  full log text into a scrollable `<pre>` element. Respects the Anonymise
+  identifiers toggle. `Bes3DebugLog.getText(options)` exposed for this purpose.
+
+## 0.51.8 — 2026-11-09
+
+- **fix(engine/policy):** Reverted `ackSufficient` from `lightSwitch` and
+  `lightAvailable`, and removed the option from `judgeWrite`. The workaround
+  was added to suppress "acknowledged, not confirmed" failures, but those
+  failures were caused by writing `BIKE_LIGHT` while `BIKE_LIGHT_AVAILABLE`
+  was false — a condition now blocked by the availability guard in 0.51.7.
+  With the guard in place the light is only switched when it is installed, so
+  the normal read-back verification is correct and sufficient.
+
+## 0.51.7 — 2026-11-09
+
+- **fix(ui):** Restored the 0.3.x behaviour: the direct "Turn light on/off"
+  button is now only shown when `BIKE_LIGHT_AVAILABLE` is `true`. When light
+  output is not enabled the button is replaced by a hint: "Enable light output
+  above to use the switch." This prevents sending `BIKE_LIGHT` writes that the
+  drive unit silently ignores because light output is not installed.
+  Root cause: at 0.3 the button was guarded by `d.light.available === true`
+  (line 769 of that version); the guard was lost when the card was redesigned
+  in 0.51.x.
+- **fix(ui):** `lightToggle()` now also checks `cur.available !== true` and
+  toasts an explanation, matching the button visibility guard.
+
+## 0.51.6 — 2026-11-09
+
+- **fix(engine/policy):** Light switch and light available writes now accept a
+  SUCCESS ACK as confirmation when the read-back disagrees (`ackSufficient`
+  option). Debug log analysis of a BRC3100 confirmed that `BIKE_LIGHT` (0x181c)
+  and `BIKE_LIGHT_AVAILABLE` (0x1820) behave as command registers on this
+  firmware: the register reflects the current hardware/sensor state, not the
+  last written value, so the read-back never matches the off-command even though
+  the physical state changes. The write still goes through the full grant,
+  approval, and single-writer lock; the ACK-based verdict is visible in the
+  session log as "accepted (acknowledged — read-back inconclusive)".
+- **fix(ui):** Light batch steps (`lightSteps()`) now carry `continueOnFailure:
+  true` so that a non-confirmed switch-off no longer skips the remaining steps
+  ("Mark bike light as not installed", "Set light power"). This was the
+  immediate symptom reported after the previous fix.
+- **fix(policy):** `judgeWrite` extended with `ackSufficient` option — when set
+  and the write was ACKed but the read-back does not confirm, `applied` is `true`
+  with a distinct `statusName`. The `readable: false` path is unaffected.
+- **test:** Updated `acknowledged + differing read-back` engine check to assert
+  the new `ackSufficient` behavior for `lightSwitch`.
+
+## 0.51.5 — 2026-11-09
+
+- **fix(engine):** Write verification read-back timing is now transport-aware.
+  BLE MCSP sessions use a longer first settle (1500 ms, was 700 ms), a longer
+  second-look gap (1500 ms, was 900 ms), and a third read-back attempt after a
+  further 2000 ms when the write was ACKed but not yet confirmed. This addresses
+  "acknowledged, not confirmed" failures for `BIKE_LIGHT` and other registers
+  over Bluetooth where GATT round-trip latency is higher than USB.
+- **fix(engine):** `runPlan` now supports a per-step `continueOnFailure` flag.
+  When set, a non-applied result does not stop the remaining steps in the batch.
+  Port steps use this flag so a mismatched `LOW_POWER_PORT_ACTIVE` read-back no
+  longer skips `HIGH_POWER_PORT_ACTIVE`.
+- **fix(engine):** `LOW_POWER_PORT_ACTIVE` and `HIGH_POWER_PORT_ACTIVE` added to
+  the READ_PLAN — both registers are read automatically on every connect/re-read
+  and no longer require a separate "Read port states" button press before staging.
+- **fix(ui):** `applyPorts` now silently reads any port whose state is unknown
+  before staging the batch. The "Read X first" gate no longer blocks the user
+  after a fresh connect.
+- **feat(ui):** Accessory power port states (`LOW_POWER_PORT_ACTIVE`,
+  `HIGH_POWER_PORT_ACTIVE`) are now shown on the Overview page in a dedicated
+  "Accessory power ports" section, labelled Experimental.
+- **fix(ui):** `runStepsModal` result summary now respects `continueOnFailure`:
+  the "No further steps were sent" clause is omitted when the batch continued
+  past a failure; a "N of M steps confirmed" count is shown instead.
+- **fix(ui):** Port steps gain `portCurrentDisplay` from fresh read-back so the
+  "currently …" label in the staged row is accurate after the auto-read.
+
+## 0.51.4 — 2026-11-09
+
+- **fix(transport-webble):** Live Data BLE `requestDevice` now filters on the
+  Live Data service UUID (`0000eb20-eaa2-11e9-81b4-2a2ae2dbcce4`) directly
+  instead of `0xfe02`. Chrome only guarantees notification delivery for
+  services listed in `filters`; using `optionalServices` only caused
+  notifications to be silently dropped on some platforms.
+- **fix(ui):** BLE MCSP session is now read-only in the UI: the Configuration
+  tab is disabled and grayed out with a tooltip explaining the restriction;
+  if the user was on that tab when BLE connects they are redirected to
+  Overview. The connection pill shows "Connected (BLE, read-only)". A
+  read-only notice banner appears at the top of the Configuration view.
+- **feat(ui):** Bluetooth pairing hint added to the start page and reconnect
+  picker — recommends pairing in OS Bluetooth settings before connecting.
+- **fix(ui):** Live Data card cleaned up: only received fields are shown (no
+  "not available" rows for unseen fields); "Waiting…" state shows a single
+  message instead of 13 empty rows; UUID moved out of the subtitle; section
+  title shortened to "Bluetooth Live Data".
+- **test:** Updated telemetry card assertion to match new section title.
+
+## 0.51.3 — 2026-11-09
+
+- **feat(ui):** Contextual API availability hints for WebUSB and Web Bluetooth.
+  - USB and Bluetooth availability are detected independently via
+    `'usb' in navigator` and `'bluetooth' in navigator`.
+  - `window.isSecureContext` distinguishes an insecure HTTP origin from
+    other causes (browser/platform/policy restriction).
+  - On an insecure origin the hint explains that browser USB/Bluetooth access
+    requires a secure context, recommends HTTPS, and for local Edge
+    development shows step-by-step instructions to enable the insecure-origin
+    flag with the page's exact `window.location.origin` as selectable,
+    copyable text. Includes a plain-text copy of the Edge flags address so it
+    can be pasted without clicking. A short warning notes this does not
+    encrypt HTTP traffic.
+  - On a secure context with a missing API the hint explains that the browser
+    or platform may not support the API or that a policy restricts it, without
+    claiming to know the cause.
+  - Hints appear on the start view below the affected connection buttons and
+    in the reconnect picker alongside unavailable modes. Supported modes
+    remain usable.
+  - New `copyApiHintOrigin` and `copyApiHintEdgeUrl` click actions.
+  - Old static `#usbWarn` paragraph superseded; button disabling retained.
+- **test:** Six new source-level checks covering: no hint when API available;
+  insecure-context branch gating; Edge URL absent from secure-context guidance;
+  independent USB/Bluetooth availability checks; origin escaping and copy
+  actions; HTTP-traffic warning; reconnect picker insecure-context reasons.
+  Suite count: **228** (was 222).
+
+## 0.51.2 — 2026-11-09
+
+- **fix(engine):** `scanIssues()` in `clearFaultMemory` now receives the
+  operation context so a concurrent `readAll` cannot race the post-clear
+  re-scan and produce non-deterministic fault-memory state.
+- **fix(engine):** `state.transportKind` is now cleared to `null` in
+  `handleTransportLoss`, matching the already-cleared `transport` pointer.
+- **fix(engine):** Switching to Live Data BLE now archives and resets
+  `state.log`, so prior-session write entries no longer appear in exports
+  taken during a Live Data BLE session.
+- **fix(ui):** `$('runResult').innerHTML` in `runStepsModal` is now null-guarded;
+  closing the modal before the write plan acquires the engine lock no longer
+  throws a TypeError and shows an "Action failed" toast.
+- **fix(ui):** Escape now dismisses single-button informational and error modals
+  (e.g. "Connection failed", "Action failed"); previously only cancel-variant
+  multi-button modals could be dismissed with the keyboard.
+- **fix(ui):** Modal focus restoration now re-queries the opener by `id` after
+  close, so focus returns correctly even when the opener was re-rendered while
+  the modal was open.
+- **fix(ui):** The pending-changes table now shows human-readable tier labels
+  ("Verified", "High impact", "Read-only in registry") instead of raw policy
+  strings.
+- **refactor(ui):** Several stale comments updated; dead `switchOn` light-draft
+  field removed; `lightToggle` step now built from `POLICY.planLightSwitch` to
+  keep bytes and address in sync with the writer; fallback bike name corrected
+  to "eBike"; indentation fix in Write Lab target reset.
+- **refactor(css):** Removed two unused `.wcard__icon` modifier classes.
+- **refactor(debug-log):** Historical "Bug fix" comment rewritten as
+  present-tense rationale.
+- **refactor(engine):** Live Data BLE ordering comment rewritten as a
+  present-tense explanation.
+- **refactor(docs):** Redundant power-port safety sentences removed from README
+  and `docs/workshop-write-safety.md`.
+- **test:** Updated staging test to assert human-readable tier label "Verified";
+  removed one duplicate `cardChip('ports')` assertion.
+
 ## 0.51.1 — 2026-11-08
 
 - The long payload-assumption notice was removed from the Power ports card. The

@@ -21,12 +21,12 @@
     if (data === undefined) return undefined;
     if (data instanceof Uint8Array || Array.isArray(data)) return toHex(data);
     if (typeof data === 'object' && data !== null) {
-      // Bug fix: plain objects (e.g. a decoded {label, display, value} result, or a raw read
-      // result like {declined, payload}) used to be stored as a live object reference, then
-      // stringified via template-literal interpolation in buildReport() — which silently
-      // produces "[object Object]" for anything that isn't a string/number, losing the data
-      // entirely in every exported log. JSON.stringify actually shows the content; fall back to
-      // String(data) only if the object can't be serialized (e.g. contains a circular reference).
+      // Serialize plain objects here (e.g. a decoded {label, display, value}
+      // result, or a raw read result like {declined, payload}). Storing the live
+      // reference and interpolating it later in buildReport() would produce
+      // "[object Object]" and lose the data in the exported log. Fall back to
+      // String(data) only when JSON.stringify cannot serialize the object, such
+      // as a circular reference.
       try { return JSON.stringify(data); } catch (_) { return String(data); }
     }
     return data;
@@ -87,5 +87,5 @@
     log('error', 'unhandled promise rejection', String(e.reason && e.reason.stack ? e.reason.stack : e.reason));
   });
 
-  window.Bes3DebugLog = { log, download, toHex };
+  window.Bes3DebugLog = { log, download, toHex, getText: buildReport };
 })();
