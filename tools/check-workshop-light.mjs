@@ -4446,46 +4446,45 @@ check('source: the light theme, the modal focus and the re-read control (source 
 
   check('API hint source: no hint when both APIs are available (source)', () => {
     const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
-    // When the API is available the function returns '' immediately.
-    assert(/if \(available\) return '';/.test(ui), 'apiHintHtml returns empty string when API is available');
-    // Both USB and BT are checked via apiAvail().hasUsb / hasBt.
-    assert(ui.includes("apiName === 'usb' ? apiAvail().hasUsb : apiAvail().hasBt"),
-      'availability of both APIs drives the early-exit guard');
+    // When both APIs are available the combined function returns '' immediately.
+    assert(ui.includes('if (!missingUsb && !missingBt) return \'\''),
+      'apiHintCombinedHtml returns empty string when both APIs are available');
+    assert(/apiAvail\(\)\.hasUsb/.test(ui), 'USB availability checked via apiAvail()');
+    assert(/apiAvail\(\)\.hasBt/.test(ui),  'BT availability checked via apiAvail()');
   });
 
   check('API hint source: insecure-context hint appears only when !isSecureContext', () => {
     const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
     assert(ui.includes('API_SECURE'), 'a stable secure-context flag is defined');
     assert(ui.includes('apiAvail()'), 'availability is read from a live helper');
-    assert(ui.includes('apiHintHtml'), 'apiHintHtml is defined');
-    // The insecure branch is guarded by the isSecureContext check.
-    assert(ui.includes("if (!apiAvail().secure)"), 'insecure-context branch is gated on secure flag');
-    // The Edge flag URL must appear exactly once and only inside that branch.
+    assert(ui.includes('apiHintCombinedHtml'), 'combined hint function is defined');
+    // The insecure branch is gated on the secure flag.
+    assert(ui.includes("if (!secure)"), 'insecure-context branch is gated on secure flag');
+    // The Edge flag URL must appear at least once.
     const edgeCount = (ui.match(/edge:\/\/flags/g) || []).length;
     assert(edgeCount >= 1, 'Edge flag URL appears at least once');
-    // The secure-context missing-API message ('not available in this browser') must also exist.
-    assert(ui.includes('is not available in this browser.'), 'secure-context missing-API message exists');
-    // The HTTP-traffic warning belongs only to the insecure branch.
+    // The secure-context missing-API message must exist.
+    assert(ui.includes('not available in this browser'), 'secure-context missing-API message exists');
+    // The HTTP-traffic warning must be present.
     assert(ui.includes('does not encrypt HTTP traffic'), 'HTTP-traffic caveat present');
-    // Confirm the secure-context guidance (the second return) does not embed
-    // the Edge workaround. The click dispatcher also references edge://flags but
-    // is outside apiHintHtml, so we scope the check to the function body.
-    const fnStart = ui.indexOf('function apiHintHtml(');
-    const fnEnd   = ui.indexOf('\n  }', fnStart + 1);  // closing brace of apiHintHtml
+    // Confirm the secure-context branch does not embed the Edge workaround.
+    const fnStart = ui.indexOf('function apiHintCombinedHtml(');
+    const fnEnd   = ui.indexOf('\n  }', fnStart + 1);
     const fnBody  = ui.slice(fnStart, fnEnd);
     const secureBranchStart = fnBody.indexOf('return `<div class="notice api-hint"');
-    assert(secureBranchStart !== -1, 'secure-context return branch exists inside apiHintHtml');
+    assert(secureBranchStart !== -1, 'secure-context return branch exists inside apiHintCombinedHtml');
     assert(fnBody.indexOf('edge://flags', secureBranchStart) === -1,
       'Edge workaround absent from secure-context guidance');
   });
 
-  check('API hint source: USB and Bluetooth checked independently', () => {
+  check('API hint source: USB and Bluetooth checked independently via apiAvail', () => {
     const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
-    assert(/apiName === 'usb'.*apiAvail\(\)\.hasUsb|apiAvail\(\)\.hasUsb.*apiName === 'usb'/.test(ui),
-      'USB availability checked against hasUsb');
-    assert(/apiAvail\(\)\.hasBt/.test(ui), 'Bluetooth availability checked against hasBt');
-    assert(ui.includes("apiHintHtml('usb')"), 'USB hint injected with usb argument');
-    assert(ui.includes("apiHintHtml('bt')"),  'Bluetooth hint injected with bt argument');
+    assert(/apiAvail\(\)\.hasUsb/.test(ui), 'USB availability checked against hasUsb');
+    assert(/apiAvail\(\)\.hasBt/.test(ui),  'Bluetooth availability checked against hasBt');
+    // Combined hint is injected via a single container.
+    assert(ui.includes("apiHintCombinedHtml()"), 'combined hint injected once');
+    assert(!ui.includes("apiHintHtml('usb')") && !ui.includes("apiHintHtml('bt')"),
+      'old per-API hint calls are removed');
   });
 
   check('API hint source: origin rendered with esc() and a copy button', () => {

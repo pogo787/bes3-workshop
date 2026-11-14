@@ -2847,17 +2847,24 @@
 
   // Returns an HTML notice string explaining why a browser API is unavailable,
   // or '' when it is available. apiName is 'usb' or 'bt'.
-  function apiHintHtml(apiName) {
-    const available = apiName === 'usb' ? apiAvail().hasUsb : apiAvail().hasBt;
-    if (available) return '';
-    const apiLabel = apiName === 'usb' ? 'WebUSB' : 'Web Bluetooth';
-    const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
+  // Returns a single combined hint for all unavailable APIs, or '' if both
+  // are available. Avoids showing two identical notices side by side.
+  function apiHintCombinedHtml() {
+    const { hasUsb, hasBt, secure } = apiAvail();
+    const missingUsb = !hasUsb;
+    const missingBt  = !hasBt;
+    if (!missingUsb && !missingBt) return '';
+
+    const missingLabel = missingUsb && missingBt ? 'WebUSB and Web Bluetooth'
+      : missingUsb ? 'WebUSB' : 'Web Bluetooth';
+    const origin  = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
     const flagUrl = 'edge://flags/#unsafely-treat-insecure-origin-as-secure';
-    if (!apiAvail().secure) {
+
+    if (!secure) {
       return `<div class="notice notice--warn api-hint" role="note">
         ${ICON.warn}
         <div>
-          <strong>${apiLabel} is not available on this page.</strong>
+          <strong>${esc(missingLabel)} ${missingUsb && missingBt ? 'are' : 'is'} not available on this page.</strong>
           Browser APIs for USB and Bluetooth require a <em>secure context</em> (HTTPS or
           localhost). This page was loaded over an insecure origin, so the browser
           has disabled those APIs.
@@ -2885,9 +2892,9 @@
     return `<div class="notice api-hint" role="note">
       ${ICON.info}
       <div>
-        <strong>${apiLabel} is not available in this browser.</strong>
-        The browser or platform may not support this API, or a browser or
-        organisation policy may restrict it. No action is available here.
+        <strong>${esc(missingLabel)} ${missingUsb && missingBt ? 'are' : 'is'} not available in this browser.</strong>
+        The browser or platform may not support ${missingUsb && missingBt ? 'these APIs' : 'this API'}, or a browser or
+        organisation policy may restrict ${missingUsb && missingBt ? 'them' : 'it'}. No action is available here.
         <br>If you expect support, check that you are using a recent version of
         Chrome or Edge on Windows, macOS or Linux.
       </div>
@@ -3164,13 +3171,11 @@
     document.documentElement.setAttribute('data-theme', n);
     try { localStorage.setItem('bes3-workshop-theme', n); } catch (_) { /* ignore */ }
   };
-  // Inject API availability hints into the start view. These are computed once
-  // (API presence and isSecureContext are stable for the page lifetime).
+  // Inject a combined API availability hint. Computed once (isSecureContext
+  // and API presence are stable for the page lifetime).
   (function () {
-    const hintUsb = $('apiHintUsb');
-    const hintBt  = $('apiHintBt');
-    if (hintUsb) hintUsb.innerHTML = apiHintHtml('usb');
-    if (hintBt)  hintBt.innerHTML  = apiHintHtml('bt');
+    const hint = $('apiHint');
+    if (hint) hint.innerHTML = apiHintCombinedHtml();
   }());
   if (!apiAvail().hasUsb) { $('btnConnect').disabled = true; }
   if (!apiAvail().hasBt) {

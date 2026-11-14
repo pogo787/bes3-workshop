@@ -6,6 +6,16 @@ single source of truth; every commit that changes behaviour bumps that version
 and adds an entry here, newest first. The top entry below must match
 `POLICY.VERSION` (a source check enforces this).
 
+## 0.52.1 — 2026-11-14
+
+- **fix(ui):** The two separate API availability hints (one for WebUSB, one for
+  Web Bluetooth) are merged into a single combined notice. When both APIs are
+  unavailable for the same reason (e.g. insecure HTTP origin), the user now
+  sees one notice that says "WebUSB and Web Bluetooth are not available" with
+  one set of Edge flag instructions rather than two identical blocks.
+  The `<div id="apiHintUsb">` / `<div id="apiHintBt">` containers in
+  `index.html` are replaced by a single `<div id="apiHint">`.
+
 ## 0.52.0 — 2026-11-14
 
 ### WP2 — Verified writes over BLE MCSP

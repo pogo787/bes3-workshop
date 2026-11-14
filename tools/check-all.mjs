@@ -279,7 +279,7 @@ const SAFE_HELPERS = [
 // These allow-listed builders render device- or file-derived values. Their
 // bodies are scanned as well, so an allow-list entry cannot hide an unescaped
 // interpolation inside a nested template.
-const SCANNED_HELPERS = ['compCards', 'remoteProbeTable', 'rowHtml', 'legend', 'stack', 'catalogBtn', 'modeRows', 'pendingPanel', 'renderLogRow', 'renderLogHistory', 'serviceReasons', 'bleLiveCard', 'portRows', 'portReasonsText', 'cardChip', 'apiHintHtml', 'writeLabResultsHtml', 'demoNoticeHtml', 'writeLabFriendlyInput'];
+const SCANNED_HELPERS = ['compCards', 'remoteProbeTable', 'rowHtml', 'legend', 'stack', 'catalogBtn', 'modeRows', 'pendingPanel', 'renderLogRow', 'renderLogHistory', 'serviceReasons', 'bleLiveCard', 'portRows', 'portReasonsText', 'cardChip', 'apiHintCombinedHtml', 'writeLabResultsHtml', 'demoNoticeHtml', 'writeLabFriendlyInput'];
 // Allow-listed fragments: whole HTML fragments built by the app above (never
 // raw device or file text).
 const SAFE_FRAGMENTS = [
