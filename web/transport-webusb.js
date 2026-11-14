@@ -101,8 +101,19 @@ class Bes3WebUsbTransport {
 
     const padded = window.Bes3UsbAck.padPayload(payload);
     let transferred = false;
-    // The frame is put on the wire exactly once.
-    await this.device.transferOut(EP_OUT, padded);
+    // The frame is put on the wire exactly once. Capture the USB transfer result
+    // so a stall or short OUT does not silently proceed into ACK polling.
+    const outResult = await this.device.transferOut(EP_OUT, padded);
+    if (outResult.status !== 'ok') {
+      // The USB layer rejected or stalled the bulk OUT: the frame was not
+      // fully delivered. Do not enter ACK polling; surface the failure now.
+      throw new Error(`USB bulk OUT failed: status = ${outResult.status}`);
+    }
+    if (typeof outResult.bytesWritten === 'number' && outResult.bytesWritten < padded.byteLength) {
+      throw new Error(
+        `USB bulk OUT short write: sent ${outResult.bytesWritten} of ${padded.byteLength} bytes`
+      );
+    }
     // From here on a later failure means "sent, not acknowledged", not "never
     // sent". The engine uses this to tell the user that the bike may have
     // applied the write and the read-back decides.

@@ -69,12 +69,14 @@ it). Each carries a fixed operation id and target:
 | `Writers.syncBikeId(targetComponent, uuid, owner)` | `BIKE_ID` | `<target>.BIKE_ID` (0x2184 / 0x182c) |
 | `Writers.generic(component, name, payloadBytes, owner)` | `GENERIC_WRITE` | a registry-writable, non-blocked register |
 
-The **light switch** button is the one direct entry point. It calls
-`Writers.lightSwitch(on, owner)` inside a one-step `runPlan` (via
-`runStepsModal`) instead of adding a row to `Pending changes`. It still passes
-the same gate order below, including the grant, the single-writer lock and the
-read-back. It is a limited exception to staging only, never to verification, and
-it never stages or applies any other pending row.
+The **Toggle light** button is the one direct entry point. It calls
+`Writers.lightSwitch(true, owner)` for turn-on (one `BIKE_LIGHT` write), and
+two `Writers.lightAvailable` calls for turn-off (false → true, an availability
+bounce). All steps run inside `runPlan` via `runStepsModal`, not in `Pending
+changes`. They still pass the same gate order below, including the grant, the
+single-writer lock and the read-back. This is a limited exception to staging
+only, never to verification, and it never stages or applies any other pending
+row.
 
 The **Power ports** card has no `Writers.*` entry of its own. It stages one
 `GENERIC_WRITE` step per changed port (`DriveUnit.LOW_POWER_PORT_ACTIVE` /

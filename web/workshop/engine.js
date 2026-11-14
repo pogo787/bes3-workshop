@@ -235,7 +235,7 @@
       const v = decodeField1Varint(raw);
       return { display: v === null ? `hex: ${hex}` : `${(v / 10).toFixed(1)} W`, value: v === null ? null : v / 10, hex };
     }
-    if (key === 'DriveUnit.BIKE_LIGHT_CONFIGURATION') {
+    if (key === 'DriveUnit.BIKE_LIGHT_CONFIGURATION' || key === 'DriveUnit.BIKE_LIGHT_CONFIGURATION_OEM') {
       const v = decodeField1Varint(raw);
       return { display: v === null ? `hex: ${hex}` : String(v), value: v, hex };
     }
@@ -314,6 +314,7 @@
     values: {}, // key -> {status, display, value, hex}
     components: {}, // component -> present bool
     assistModes: [], // [{configId, name, color, distance, energy, udam}]
+    extraAssistModes: [], // [{configId, nameShort, nameLong, color} — from 0x183E/0x108B, experimental, read-only]
     issues: null, // null | [{component, issueId, timestamp, activationCount}]
     issuesScanned: false,
     issuesTruncated: false,
@@ -343,10 +344,14 @@
   // Session-only experimental authorization + write-plan lock (write-policy.js).
   const guard = POLICY.createSession();
 
-  // The current session mode: 'live' (real USB ), 'demo' (simulated) or 'file'
+  // The current session mode: 'live' (real USB), 'demo' (simulated) or 'file'
   // (saved readout, read-only). Hardware-changing operations require 'live' or
   // 'demo' AND the explicit experimental opt-in.
   function sessionMode() { return state.demo ? 'demo' : (state.live && transport ? 'live' : 'file'); }
+  // Derive the idle/file mode from current values: 'file' if there is any
+  // readout data, 'idle' if the slate is blank. Used in many error/disconnect
+  // paths to avoid showing the start screen when a readout is still displayed.
+  function idleOrFile() { return Object.keys(state.values).length ? 'file' : 'idle'; }
   function exportSource() { return sessionMode(); }
   function setExperimental(on) { guard.setExperimental(on); emit('change'); }
 
@@ -385,7 +390,7 @@
     state.simulatedExport = false;
     state.connectionLost = true;
     state.connectionLostReason = reason || 'No response from eBike';
-    if (state.mode !== 'demo') state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+    state.mode = idleOrFile();
     emit('connectionlost', { reason: state.connectionLostReason });
     emit('disconnect');
     emit('change');
@@ -405,7 +410,8 @@
     const until = now() + ms;
     for (let i = 0; i < 6 && now() < until; i++) {
       if (!transport) return;
-      const f = await transport.readNextFrame(1, 2);
+      let f;
+      try { f = await transport.readNextFrame(1, 2); } catch (_) { break; }
       if (!f) break;
     }
   }
@@ -425,7 +431,12 @@
     try { await t.doMcspWrite(frame); return { ok: true, transferred: true }; }
     catch (err) {
       dlog('workshop', `send failed: ${err.message}`);
-      consecutiveFailures += 2;
+      // A failed send counts as 2: a transport-layer error strongly implies the
+      // link is broken, so the combination of one prior keepalive miss and one
+      // send failure already trips the disconnect threshold of 3.
+      // Keepalive misses count as 1 (may be a transient drop): three consecutive
+      // misses → disconnect; two send failures → also disconnect.
+      consecutiveFailures += 2; // send failure counts double
       if (consecutiveFailures >= 3 || /transferOut|disconnected|device|GATT|USB|Bluetooth/i.test(err.message || '')) {
         handleTransportLoss(transportLossLabel() + ' transfer failed (' + (err.message || 'device disconnected') + ')');
       }
@@ -452,7 +463,8 @@
   }
 
   async function rawRead(addr, ctx) {
-    return rawReadWithAttempts(addr, ctx, 3);
+    const ble = state.transportKind === 'ble-mcsp';
+    return rawReadWithAttempts(addr, ctx, ble ? 5 : 3, ble ? 700 : 450, ble ? 1000 : 700);
   }
 
   // One read attempt, no retry: used by the read-only remote probe.
@@ -460,14 +472,14 @@
     return rawReadWithAttempts(addr, ctx, 1);
   }
 
-  async function rawReadWithAttempts(addr, ctx, attempts) {
+  async function rawReadWithAttempts(addr, ctx, attempts, timeoutFirst = 450, timeoutRetry = 700) {
     for (let attempt = 0; attempt < attempts; attempt++) {
       if (ctx && !ctxCurrent(ctx)) return null;
       const s = nextSeq();
       await drain(10);
       if (ctx && !ctxCurrent(ctx)) return null;
       if (!(await send(buildReadRequestFrame(addr, s), ctx ? ctx.transport : undefined)).ok) continue;
-      const r = await awaitResponse(addr, MessageType.READ_RESPONSE, s, attempt === 0 ? 450 : 700, ctx);
+      const r = await awaitResponse(addr, MessageType.READ_RESPONSE, s, attempt === 0 ? timeoutFirst : timeoutRetry, ctx);
       if (ctx && !ctxCurrent(ctx)) return null;
       if (r) {
         if (!r.ok) return { status: 'declined', statusName: r.statusName, payload: null };
@@ -565,7 +577,7 @@
           {
             const r = await awaitResponse(KEEPALIVE_ADDR, MessageType.RPC_RESPONSE, s, 350);
             if (!r) {
-              consecutiveFailures++;
+              consecutiveFailures++; // keepalive timeout counts once (less severe than a failed send)
               if (consecutiveFailures >= 3) handleTransportLoss('eBike stopped responding (switched off or cable unplugged)');
             }
           }
@@ -617,6 +629,8 @@
         display: stored ? stored.display : (res ? res.status : 'no response'),
       });
     }
+    // Don't store partial results if the transport closed during the probe.
+    if (!ctxCurrent(ctx)) return results;
     state.remoteProbe = results;
     state.remoteProbeAt = new Date();
     emit('change');
@@ -671,7 +685,7 @@
       clearRemoteProbe();
       state.values = {};
       state.components = {};
-      state.assistModes = [];
+      state.assistModes = []; state.extraAssistModes = [];
       state.issues = null;
       state.issuesScanned = false;
       state.issuesTruncated = false;
@@ -715,7 +729,7 @@
       } finally {
         if (readInFlight === run) readInFlight = null;
         if (state.mode === 'reading' && !ctxCurrent(ctx)) {
-          state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+          state.mode = idleOrFile();
           emit('change');
         }
       }
@@ -779,6 +793,37 @@
     }
     if ((runId !== undefined && runId !== readRunId) || !ctxCurrent(useCtx)) return;
     state.assistModes = modes;
+
+    // ── Experimental: fallback probe for modes not in ACTIVE_ASSIST_MODES ──
+    // Read REQUIRED_ASSIST_MODES_UPPER (0x183E) and call GET_ASSIST_MODE_INFORMATION
+    // (0x108B) for any config-id not already in the active set. This surfaces
+    // modes that are installed on the bike but not currently active.
+    // Evidence: BikeBridge (read-only research reference) calls 0x108B per id
+    // from 0x183E. This is a hypothesis — not hardware-verified on any bike.
+    // Results go to state.extraAssistModes; state.assistModes is never modified.
+    const REQUIRED_UPPER = addrOf('DriveUnit', 'REQUIRED_ASSIST_MODES_UPPER');
+    const GET_MODE_INFO  = addrOf('DriveUnit', 'GET_ASSIST_MODE_INFORMATION');
+    if (REQUIRED_UPPER && GET_MODE_INFO) {
+      const activeIds = new Set(modes.map((m) => m.configId).filter(Boolean));
+      const reqRes = await exclusive(() => rawRead(REQUIRED_UPPER, useCtx));
+      if ((runId !== undefined && runId !== readRunId) || !ctxCurrent(useCtx)) return;
+      if (reqRes && reqRes.status === 'ok' && reqRes.payload && reqRes.payload.length > 0) {
+        const upperIds = decodeConfigIdList(Array.from(reqRes.payload));
+        const extras = [];
+        for (const configId of upperIds) {
+          if (!configId || activeIds.has(configId)) continue;
+          if ((runId !== undefined && runId !== readRunId) || !ctxCurrent(useCtx)) return;
+          const infoRes = await exclusive(() => rawRpc(GET_MODE_INFO, encodeConfigIdArg(configId), 'assist-rpc', useCtx));
+          if ((runId !== undefined && runId !== readRunId) || !ctxCurrent(useCtx)) return;
+          if (infoRes && infoRes.status === 'ok') {
+            const info = decodeAssistModeInformation(Array.from(infoRes.payload));
+            extras.push({ configId, nameShort: info.nameShort, nameLong: info.nameLong, color: info.color ? '#' + info.color.toString(16).padStart(6, '0') : null });
+          }
+        }
+        if ((runId !== undefined && runId !== readRunId) || !ctxCurrent(useCtx)) return;
+        state.extraAssistModes = extras;
+      }
+    }
   }
 
   async function scanIssues(ctx, runId) {
@@ -1077,6 +1122,8 @@
         return step;
       }
 
+      // First settle: 250 ms in demo, 1500 ms on BLE-MCSP (extra GATT round-trip),
+      // 700 ms on USB. The write itself is never retransmitted.
       await sleep(state.demo ? 250 : state.transportKind === 'ble-mcsp' ? 1500 : 700);
       if (!ctxCurrent(ctx)) return interrupted(true, write.acked);
       let after = await readKeyInContext(component, name, ctx);
@@ -1094,8 +1141,9 @@
         applied = after.status === 'ok' && expect(after.value, after) === true;
       }
       if (!applied && write.acked && state.transportKind === 'ble-mcsp') {
-        // Third look for BLE: some registers take longer to persist over the
-        // GATT round-trip. The write itself is still never retransmitted.
+        // Third look for BLE only (USB never reaches here): some registers take
+        // longer to persist across the GATT round-trip. The write itself is
+        // still never retransmitted.
         await sleep(2000);
         if (!ctxCurrent(ctx)) return interrupted(true, write.acked);
         after = await readKeyInContext(component, name, ctx);
@@ -1290,9 +1338,9 @@
         // fails closed with nothing sent. The registry-bound generic writer uses
         // the component/name/address fields to re-check its target at the
         // boundary; fixed-operation steps are checked against `POLICY.OP`.
-        const grant = (steps[i].op && steps[i].bytes) ? {
+        const grant = (steps[i].op && steps[i].bytes != null) ? {
           op: steps[i].op, component: steps[i].component, name: steps[i].name,
-          address: steps[i].address, bytes: steps[i].bytes,
+          address: steps[i].address, bytes: steps[i].bytes || '(empty)',
           // The typed register name itself, not a boolean: the writer boundary
           // compares it with the target register.
           typedName: typeof steps[i].typedName === 'string' ? steps[i].typedName : '',
@@ -1323,7 +1371,7 @@
       device = await window.Bes3WebUsb.requestDevice();
     } catch (err) {
       if (!transport && !state.live) {
-        state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+        state.mode = idleOrFile();
         emit('change');
       }
       throw err;
@@ -1343,7 +1391,7 @@
       await nextTransport.open();
     } catch (err) {
       try { if (nextTransport.close) await nextTransport.close(); } catch (_) { /* ignore */ }
-      state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+      state.mode = idleOrFile();
       emit('change');
       throw err;
     }
@@ -1466,7 +1514,7 @@
       device = await window.Bes3BleMcsp.requestMcspDevice();
     } catch (err) {
       if (!transport && !state.live && !state.bleLive) {
-        state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+        state.mode = idleOrFile();
         emit('change');
       }
       throw err;
@@ -1489,7 +1537,7 @@
     } catch (err) {
       removeBleDisconnectListener();
       try { if (nextTransport.close) await nextTransport.close(); } catch (_) { /* ignore */ }
-      state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+      state.mode = idleOrFile();
       emit('change');
       throw err;
     }
@@ -1523,7 +1571,7 @@
       device = await window.Bes3LiveDataBle.requestLiveDataDevice();
     } catch (err) {
       if (!transport && !state.live && !state.bleLive) {
-        state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+        state.mode = idleOrFile();
         emit('change');
       }
       throw err;
@@ -1562,7 +1610,7 @@
       // the notification callback ignores frames until state.bleLive points at
       // this session, so subscribing first would drop the first telemetry frame.
       state.values = {};
-      state.assistModes = [];
+      state.assistModes = []; state.extraAssistModes = [];
       state.issues = [];
       state.issuesScanned = false;
       state.issuesTruncated = false;
@@ -1593,7 +1641,7 @@
       state.issues = previous.issues;
       state.issuesScanned = previous.issuesScanned;
       state.issuesTruncated = previous.issuesTruncated;
-      state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+      state.mode = idleOrFile();
       emit('change');
       throw err;
     }
@@ -1637,7 +1685,7 @@
     state.simulatedExport = false;
     state.connectionLost = false;
     state.connectionLostReason = null;
-    state.mode = Object.keys(state.values).length ? 'file' : 'idle';
+    state.mode = idleOrFile();
     emit('change');
   }
 
@@ -1662,7 +1710,7 @@
     readRunId++;
     state.values = {};
     state.components = {};
-    state.assistModes = [];
+    state.assistModes = []; state.extraAssistModes = [];
     state.issues = null;
     state.issuesScanned = false;
     state.issuesTruncated = false;
@@ -1844,7 +1892,7 @@
       const v = state.values[`${c}.PRODUCT_NAME`];
       state.components[c] = !!v && v.status === 'ok';
     }
-    state.assistModes = modes;
+    state.assistModes = modes; state.extraAssistModes = [];
     state.issues = issues;
     state.issuesScanned = Array.isArray(json.issues);
     state.issuesTruncated = Boolean(json.issuesTruncated);
@@ -1950,6 +1998,7 @@
       values: anonymize ? anonymizeValues(state.values) : state.values,
       components: state.components,
       assistModes: state.assistModes,
+      extraAssistModes: state.extraAssistModes,
       issues: state.issues,
       issuesTruncated: state.issuesTruncated,
       // The results of the read-only Mini Remote probe. An anonymised export
@@ -2002,10 +2051,15 @@
     }
     state.components = components;
     state.assistModes = modes;
+    state.extraAssistModes = [];  // probe will re-run on next readAll
     state.issues = issues;
     state.issuesScanned = Array.isArray(json.issues);
     state.issuesTruncated = Boolean(json.issuesTruncated);
     archiveSessionLog();
+    // Imported write history (json.log) is deliberately not restored.
+    // Replaying log entries from an untrusted file could mislead the user
+    // about what writes the current session has performed. The import is
+    // read-only: no grants, no pending changes, no write state is carried in.
     state.log = [];
     state.remoteProbe = remoteProbe;
     state.remoteProbeAt = remoteProbeAt;

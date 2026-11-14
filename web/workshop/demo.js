@@ -106,14 +106,17 @@
           if (demoMode === 'decline') { respond(addr, 3, seq, [], 0x06); return; }
           // Like the real drive unit: switching the light on only sticks once the
           // light output is marked as installed AND a light setting is chosen.
-          if (addr === LIGHT && p.length) {
-            const avail = (store.get(LIGHT_AVAIL) || []).length > 0;
-            const cfg = (store.get(LIGHT_CFG) || []).length > 0;
-            if (!avail || !cfg) { respond(addr, 3, seq, []); return; }
+          // Writers send explicit 08 01/08 00; boolTrue accepts any non-zero
+          // payload byte 1 (any valid protobuf non-zero varint = true).
+          const boolTrue = (b) => { const bytes = store.get(b) || []; return bytes.length >= 2 && bytes[0] === 0x08 && bytes[1] !== 0x00; };
+          if (addr === LIGHT && p.length === 2 && p[0] === 0x08 && p[1] !== 0x00) {
+            if (!boolTrue(LIGHT_AVAIL) || !boolTrue(LIGHT_CFG)) { respond(addr, 3, seq, []); return; }
           }
           // "unchanged": the bike acknowledges the write but keeps the old value.
           if (demoMode !== 'unchanged') store.set(addr, p);
-          if (addr === LIGHT_AVAIL && !p.length) store.set(LIGHT, []);
+          // Disabling availability (empty or explicit 08 00) also clears the light
+          // state, matching real drive unit behavior.
+          if (addr === LIGHT_AVAIL && (!p.length || (p.length === 2 && p[0] === 0x08 && p[1] === 0x00))) store.set(LIGHT, []);
           respond(addr, 3, seq, []); // real bike: SUCCESS with empty payload
         } else if (type === 4) {
           const id = configIdFromArg(p);

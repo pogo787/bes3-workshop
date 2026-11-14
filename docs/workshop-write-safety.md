@@ -23,7 +23,7 @@ The engine (`web/workshop/engine.js`) enforces it at execution time, and the UI
 | --- | --- | --- |
 | Enable light output | `DriveUnit.BIKE_LIGHT_AVAILABLE` (0x1820) | availability change is explicit and the current state is readable |
 | Disable light output | `DriveUnit.BIKE_LIGHT` (0x181c, off), then `BIKE_LIGHT_AVAILABLE` (0x1820, false) | availability change is explicit and the light is currently installed |
-| Switch light on/off (runtime) | `DriveUnit.BIKE_LIGHT` (0x181c) | explicit **Turn light on / Turn light off** button, current state readable; writes immediately (the one staging exception) and is judged only by a fresh read-back |
+| Toggle light (runtime) | Turn on: `DriveUnit.BIKE_LIGHT` (0x181c, `08 01`). Turn off: `DriveUnit.BIKE_LIGHT_AVAILABLE` (0x1820, false) then `BIKE_LIGHT_AVAILABLE` (0x1820, true) — availability bounce | explicit **Toggle light** button, light output enabled, current state readable; writes immediately (the one staging exception) |
 | Set startup mode | `DriveUnit.BIKE_LIGHT_CONFIGURATION` (0x1821) | explicit valid mode (1/2/3) chosen and different from current |
 | Set light power | `DriveUnit.BIKE_LIGHT_POWER` (0x1822) | explicit value in 1.0–18.0 W (0.1 W steps) different from the current reading, current value readable, planned as the last step of the light write plan and covered by the same lamp confirmation |
 | Enable / disable Low Power Port | `DriveUnit.LOW_POWER_PORT_ACTIVE` (0x1831) | explicit Enable or Disable chosen (Unchanged never writes), current value read successfully, experimental writes enabled; staged as a normal-tier `GENERIC_WRITE` step (no typed-name gate) |
@@ -36,17 +36,23 @@ The engine (`web/workshop/engine.js`) enforces it at execution time, and the UI
 There is no hidden default. A fresh draft writes nothing: no default power, no
 default startup mode, and no implicit switch-on.
 
-**Light switch exception.** The light state button is the one deliberate
-exception to the staged `Pending changes` flow. One click sends exactly one
-`BIKE_LIGHT` write through `runPlan`/`writeVerified`, with the same connection
-and authorization checks, one-shot grant, single-writer lock, audit log and
-independent read-back as a batch step. It is not an exception to verification:
-it is shown as successful only when the fresh read-back matches; an acknowledged
-write whose read-back does not match is reported as unverified. It never stages
-a row, never touches unrelated pending changes, is disabled while another write
-or batch is active or while the light state is unknown, and is never replayed on
-reconnect. When the state is unknown, the card offers a read-only refresh
-instead of a blind write.
+**Light toggle exception.** The **Toggle light** button is the one deliberate
+exception to the staged `Pending changes` flow. It writes immediately through
+`runPlan`/`writeVerified`, with the same connection and authorization checks,
+one-shot grant per step, single-writer lock, audit log and independent
+read-back as a batch step. It is not an exception to verification.
+
+**Turn on** issues one `BIKE_LIGHT` write. **Turn off** issues two
+`BIKE_LIGHT_AVAILABLE` writes (false → true, an availability bounce): on some
+firmware versions a direct `BIKE_LIGHT=false` write is silently ignored, while
+toggling availability reliably cuts the output and restores the installed flag.
+
+The toggle is shown as successful only when the fresh read-back matches; an
+acknowledged write whose read-back does not match is reported as unverified. It
+never stages a row, never touches unrelated pending changes, is disabled while
+another write or batch is active, while the light output is not enabled, or
+while the light state is unknown, and is never replayed on reconnect. When the
+state is unknown, the card offers a read-only refresh instead of a blind write.
 
 The `1.0–18.0` / `0.1`-step limits for `BIKE_LIGHT_POWER` are Workshop
 input-validation bounds, not a verified register specification. The payload is
@@ -484,7 +490,7 @@ node tools/check-workshop-light.mjs
 
 Status (executed): Node.js **v24.22.1**. `node --check` passed for
 `write-policy.js`, `engine.js`, `ui.js` and this runner; the runner reported
-**228 passed, 0 failed, 0 skipped** (the policy/source checks plus the engine
+**236 passed, 0 failed, 0 skipped** (the policy/source checks plus the engine
 checks against the simulated transport); `git diff --check` was clean. One of the
 source checks validates the System ID card's experimental/untested wording at
 source level; it is not browser execution. This establishes the policy and the

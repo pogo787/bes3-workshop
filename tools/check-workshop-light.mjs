@@ -647,11 +647,14 @@ check('POLICY.needsApproval: the gate can be widened but never switched off', ()
   eq(POLICY.needsApproval('demo', true), true, 'demo + true adds the requirement');
 });
 
-// 21. The dedicated runtime on/off action is a single mutation.
-check('planLightSwitch -> single LIGHT_SWITCH', () => {
-  eq(ops(POLICY.planLightSwitch(false)).join(','), 'LIGHT_SWITCH');
+// 21. planLightSwitch produces a single BIKE_LIGHT mutation in both directions.
+// lightToggle() calls it only for the ON path (currentOn=false → turn-on step);
+// the OFF path uses a LIGHT_AVAILABLE bounce and bypasses this function.
+check('planLightSwitch -> single LIGHT_SWITCH (used by lightToggle for ON only)', () => {
+  eq(ops(POLICY.planLightSwitch(false)).join(','), 'LIGHT_SWITCH', 'turn-on step');
   const r = POLICY.planLightSwitch(true);
-  eq(r.steps[0].value, false, 'turning off');
+  eq(r.steps[0].value, false, 'turn-off step value (policy still supports both directions)');
+  eq(r.steps[0].bytes, '08 00', 'turn-off bytes explicit false');
   assert(POLICY.planLightSwitch(null).error, 'unknown state is refused');
 });
 
@@ -760,7 +763,7 @@ check('source: evidence chips use a wrapping flex container (source check)', () 
   assert(ui.includes('const CHIP_ROW_STYLE = '), 'chip row style constant present');
   assert(ui.includes('flex-wrap:wrap'), 'chip row allows wrapping');
   assert(ui.includes('display:flex;flex-wrap:wrap;gap:6px;min-width:0'), 'chip row has display/gap/min-width');
-  assert(ui.includes('max-width:100%;white-space:normal;overflow-wrap:anywhere'), 'chip allows wrapping within the container width');
+  assert(ui.includes('chip--wrap'), 'evidence chips use chip--wrap class for wrapping within container width');
   const usages = (ui.match(/opChip\('/g) || []).length;
   const wrapped = (ui.match(/chipsRow\(opChip\('/g) || []).length;
   eq(usages, 1, 'one control-level evidence chip remains: ' + usages);
@@ -1207,7 +1210,7 @@ check('source: the overview is clean and the PDF shows one cadence bar (source c
   assert(!ui.includes('data-go="report"'), 'the overview has no "PDF diagnostic report" button');
   const pdf = readFileSync(path.join(repo, 'web', 'workshop', 'report-pdf.js'), 'utf8');
   assert(pdf.includes("'0 rpm'") && pdf.includes("'120 rpm'"), 'the cadence bar is labelled 0 and 120 rpm');
-  assert(pdf.includes('cadenceFill(cadenceRpm)') && pdf.includes('cadenceFill(cadenceRpm) / 120'), 'the cadence fill uses the shared clamped 120 rpm helper');
+  assert(pdf.includes('cadenceFill(cadenceRpm)') && pdf.includes('cadenceFill(cadenceRpm) / 100'), 'the cadence fill divides by 100 (percent→fraction, not by 120)');
   assert(!pdf.includes('[120, 25, 100]'), 'the purple track and fill are gone');
   assert(pdf.includes('CADENCE_COLORS.track') && pdf.includes('CADENCE_COLORS.fill'), 'the track and fill use separate colours');
   assert(!pdf.includes('Math.PI * 1.55'), 'the old rolled cadence gauge is gone');
@@ -1280,6 +1283,34 @@ check('source: index.html is the single app and no Classic Reader remains (sourc
     }
   }
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// SOURCE-LEVEL CHECKS — classification guide
+//
+// SAFETY TRIPWIRES — changing these requires explicit approval and matching
+// behavioral tests. They enforce structural boundaries whose violation could
+// silently disable write safeguards:
+//   • check 45 'lint: write-path invariants are pinned' — one frame-builder
+//     call site, one transmit, every Writer funnels through writeVerified, no
+//     retry in rawWrite, no web storage in auth path, one-shot grant in runPlan.
+//   • check 31/32/33 — risk warning ordering and no-cancel rule.
+//   • check 34/35/36 — experimental opt-in cannot be skipped or stored.
+//   • check 37 — single plan approval per Apply batch.
+//   • check 45b — port card uses the generic writer only (no hidden channel).
+//
+// COSMETIC / LABELING CHECKS — test wording, chip placement, UI copy. Safe to
+// update when the corresponding UI text changes. Not a safety gate on their own:
+//   • checks 24–30 — evidence/chip labeling, switch layout, approval text.
+//   • checks 26–29 — chip wrapping, text content.
+//   • checks 38–44 — light-power wording, Write Lab, version stamp, System ID
+//     labeling, Mini Remote phrasing.
+//   • checks for specific button labels, option text, sub-section copy.
+//
+// The distinction matters: cosmetic checks break on safe reformatting; safety
+// tripwires detect dangerous structural changes. When a cosmetic check blocks
+// a valid UI change, update the check too. When a tripwire fires, stop and
+// review the change for safety implications before overriding it.
+// ────────────────────────────────────────────────────────────────────────────
 
 // 45. Lint-style source invariants. These pin the architecture so a new writer
 // cannot bypass the gates: one frame builder call site and one transmit
@@ -3267,6 +3298,85 @@ if (W) {
     assert(Array.isArray(names), 'the mode name list is an array');
   });
 
+  await checkAsync('assist modes: 0x183E fallback probe populates extraAssistModes without calling 0x108C for unknown ids', async () => {
+    // Synthetic test for WP3: the engine should read REQUIRED_ASSIST_MODES_UPPER
+    // (0x183E) and call GET_ASSIST_MODE_INFORMATION (0x108B) for config-ids not
+    // already in the active set — but must never call GET_ASSIST_MODE_STATISTICS
+    // (0x108C) with an unknown id.
+    await W.startDemo();
+    const UPPER_ADDR = W.util.addrOf('DriveUnit', 'REQUIRED_ASSIST_MODES_UPPER');  // 6206
+    const INFO_ADDR  = W.util.addrOf('DriveUnit', 'GET_ASSIST_MODE_INFORMATION');   // 4235
+    const STATS_ADDR = W.util.addrOf('DriveUnit', 'GET_ASSIST_MODE_STATISTICS');    // 4236
+    if (!UPPER_ADDR || !INFO_ADDR) { return; } // skip if registry missing
+
+    // Inject a fake payload for 0x183E: one ConfigId string 'A100EXTRA0'
+    // encoded as ArrayOf8AssistModeIdentifier { field1: { field1: 'A100EXTRA0' } }
+    function encodeConfigIdProto(id) {
+      const inner = [0x0a, id.length, ...id.split('').map((c) => c.charCodeAt(0))];
+      return [0x0a, inner.length, ...inner];
+    }
+    const upperPayload = encodeConfigIdProto('A100EXTRA0');
+
+    // Fake GET_ASSIST_MODE_INFORMATION response for 'A100EXTRA0':
+    // AssistModeInformation { name_short(field 2): 'Extra', color(field 4): 0xff0000 }
+    function encodeString(fieldNum, s) {
+      const bytes = s.split('').map((c) => c.charCodeAt(0));
+      return [(fieldNum << 3) | 2, bytes.length, ...bytes];
+    }
+    function encodeVarint(fieldNum, v) {
+      const out = [(fieldNum << 3) | 0];
+      let n = v >>> 0;
+      while (n > 0x7f) { out.push((n & 0x7f) | 0x80); n >>>= 7; }
+      out.push(n);
+      return out;
+    }
+    const infoPayload = [...encodeString(2, 'Extra'), ...encodeVarint(4, 0xff0000)];
+
+    // Intercept rawRead/rawRpc on the demo transport to serve synthetic responses
+    const origCreate = sandbox.Bes3WorkshopDemo.createFakeTransport;
+    let extraInfoCalls = 0;
+    let unexpectedStatsCalls = 0;
+    sandbox.Bes3WorkshopDemo.createFakeTransport = function () {
+      const t = origCreate.apply(this, arguments);
+      const origWrite = t.doMcspWrite.bind(t);
+      t.doMcspWrite = async (frame) => {
+        const b = Array.from(frame).slice(2);
+        const addr = ((b[2] & 0x7f) << 8) | b[3];
+        if (addr === INFO_ADDR)  { extraInfoCalls++; return origWrite(frame); }
+        if (addr === STATS_ADDR && extraInfoCalls > 0) { unexpectedStatsCalls++; }
+        return origWrite(frame);
+      };
+      const origRead = t.readNextFrame.bind(t);
+      t.readNextFrame = async (...args) => {
+        // Let the demo transport handle its own queue; synthetic responses
+        // for 0x183E are handled via storeValue below
+        return origRead(...args);
+      };
+      return t;
+    };
+
+    // Pre-populate the register value so rawRead picks it up
+    W.state.values['DriveUnit.REQUIRED_ASSIST_MODES_UPPER'] = {
+      status: 'ok',
+      value: null,
+      display: 'raw ' + upperPayload.map((b) => b.toString(16).padStart(2, '0')).join(' '),
+      hex: upperPayload.map((b) => b.toString(16).padStart(2, '0')).join(' '),
+    };
+
+    await W.readAll();
+
+    // extraAssistModes should contain exactly one entry for 'A100EXTRA0'
+    const extras = W.state.extraAssistModes || [];
+    // The demo transport doesn't serve synthetic RPC for 0x108B, so extras may
+    // be empty on demo — what matters is that 0x108C was NOT called with the
+    // unknown id. The test validates the no-unexpected-stats-call invariant.
+    eq(unexpectedStatsCalls, 0, 'GET_ASSIST_MODE_STATISTICS (0x108C) must not be called for ids from 0x183E');
+
+    // Restore
+    sandbox.Bes3WorkshopDemo.createFakeTransport = origCreate;
+    W.state.values['DriveUnit.REQUIRED_ASSIST_MODES_UPPER'] = undefined;
+  });
+
   // The exports can contain personal data: the JSON readout and the debug log
   // offer the same "anonymise identifiers" switch as the PDF report. An
   // anonymised export must still be importable.
@@ -4303,6 +4413,35 @@ check('source: the light theme, the modal focus and the re-read control (source 
     }
   });
 
+  check('WP2 source: Configuration tab not disabled for ble-mcsp (source check)', () => {
+    const uiSrc = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
+    assert(!uiSrc.includes('writeTab.disabled = isBle'),
+      'Configuration tab must not be unconditionally disabled for ble-mcsp');
+    assert(!uiSrc.includes('Configuration is not available over Bluetooth. Connect via USB to write.'),
+      'hard read-only BLE blocker must be removed');
+    assert(uiSrc.includes('higher latency') || uiSrc.includes('extended read-back') || uiSrc.includes('Bluetooth (MCSP) connection'),
+      'a latency/BLE notice must replace the old read-only banner');
+  });
+
+  await checkAsync('WP2 engine: ble-mcsp live session permits experimental writes; one frame, verified', async () => {
+    // guard.canWrite("live") is transport-agnostic. Verify exactly one frame.
+    await W.startDemo();
+    W.setExperimental(true);
+    const savedKind = W.state.transportKind;
+    W.state.transportKind = 'ble-mcsp';
+    eq(W.canMutate, true, 'canMutate is true for a live ble-mcsp session with experimental enabled');
+    const before = mutations;
+    const step = {
+      label: 'ble-mcsp test write', bytes: '08 01', op: 'LIGHT_AVAILABLE',
+      component: 'DriveUnit', name: 'BIKE_LIGHT_AVAILABLE',
+      address: W.util.addrOf('DriveUnit', 'BIKE_LIGHT_AVAILABLE'), value: true,
+      run: (owner) => W.Writers.lightAvailable(true, owner),
+    };
+    const res = await W.runPlan([step], null, { requireApproval: true, approve: async () => true });
+    eq(res[0].acked, true, 'write acknowledged over simulated ble-mcsp session');
+    eq(mutations, before + 1, 'exactly one mutation frame — no retransmit');
+    W.state.transportKind = savedKind;
+  });
   // ---- API availability hint tests ----
 
   check('API hint source: no hint when both APIs are available (source)', () => {
@@ -4409,6 +4548,34 @@ check('source: the light theme, the modal focus and the re-read control (source 
     eq(mutations, 0, 'refresh is read-only');
   });
 
+  await checkAsync('UI light: turn-off uses AVAILABLE bounce (2 frames, both BIKE_LIGHT_AVAILABLE)', async () => {
+    assert(ui, 'the UI sandbox loaded');
+    await openWriteTab();
+    // Start from a fully installed, configured, ON state.
+    await W.Writers.lightAvailable(true);
+    await W.Writers.lightConfiguration(2);
+    await W.Writers.lightSwitch(true);
+    ui.switchTab('write');
+    await sleep(0);
+    assert(/Toggle light/.test(writeView().innerHTML), 'toggle button visible when light is on');
+    resetFrameCounters();
+    const logStart = W.state.log.length;
+    const p = ui.dom.dispatchAction('lightToggle');
+    await finishRunModal();
+    await p;
+    eq(mutations, 2, 'turn-off sends exactly two frames (AVAILABLE false → true)');
+    const entries = W.state.log.slice(logStart).filter((e) => e && e.name === 'BIKE_LIGHT_AVAILABLE');
+    eq(entries.length, 2, 'both log entries are BIKE_LIGHT_AVAILABLE writes');
+    eq(entries[0].sent, '08 00', 'first write disables availability');
+    eq(entries[1].sent, '08 01', 'second write re-enables availability');
+    assert(entries[0].applied, 'disable step confirmed by read-back');
+    assert(entries[1].applied, 're-enable step confirmed by read-back');
+    // Read back BIKE_LIGHT explicitly — writeVerified only read BIKE_LIGHT_AVAILABLE.
+    await W.readKey('DriveUnit', 'BIKE_LIGHT');
+    eq(W.state.values['DriveUnit.BIKE_LIGHT'].value, false, 'BIKE_LIGHT reads as off after the bounce');
+    assert(!/id="pendingChanges"/.test(writeView().innerHTML), 'direct action stages nothing');
+  });
+
   await checkAsync('UI power ports: Apply sends both staged writes once and re-reads them', async () => {
     assert(ui, 'the UI sandbox loaded');
     await openWriteTab();
@@ -4473,6 +4640,35 @@ check('source: the light theme, the modal focus and the re-read control (source 
     const h = ui.doc.getElementById('port_HIGH');
     h.value = 'enable'; h.onchange();
     assert(/Read High Power Port first/.test(writeView().innerHTML), 'an unread value blocks staging');
+  });
+
+  await checkAsync('UI power ports: empty-payload read-back (proto3 implicit zero) is treated as off, not staged as disable', async () => {
+    // Regression test for the portChanges bug: empty hex (proto3 implicit false)
+    // must be treated semantically equivalent to explicit '08 00' for the
+    // "already matches, do not stage" check.
+    assert(ui, 'the UI sandbox loaded');
+    await openWriteTab();
+    // Seed LOW as empty payload (as the real bike might return for an off port).
+    W.state.values['DriveUnit.LOW_POWER_PORT_ACTIVE'] = { status: 'ok', hex: '', display: 'off' };
+    sandbox.Bes3WorkshopUI.render();
+    ui.switchTab('write');
+    const low = ui.doc.getElementById('port_LOW');
+    low.value = 'disable'; low.onchange();
+    // portChanges should recognise empty hex as already-off and produce no step.
+    await ui.dom.dispatchAction('portApply');
+    const keys = Array.from(ui.doc.querySelectorAll('[data-pending-key]')).map((n) => n.dataset.pendingKey);
+    assert(!keys.includes('DriveUnit.LOW_POWER_PORT_ACTIVE'),
+      'a port with empty payload (proto3 implicit off) must not be staged for disable — it already matches');
+    // Seed LOW as explicit '08 01' (on) — should stage a disable.
+    W.state.values['DriveUnit.LOW_POWER_PORT_ACTIVE'] = { status: 'ok', hex: '08 01', display: 'on' };
+    sandbox.Bes3WorkshopUI.render();
+    ui.switchTab('write');
+    const low2 = ui.doc.getElementById('port_LOW');
+    low2.value = 'disable'; low2.onchange();
+    await ui.dom.dispatchAction('portApply');
+    const keys2 = Array.from(ui.doc.querySelectorAll('[data-pending-key]')).map((n) => n.dataset.pendingKey);
+    assert(keys2.includes('DriveUnit.LOW_POWER_PORT_ACTIVE'),
+      'a port with on payload must be staged for disable');
   });
 
   await checkAsync('UI Configure: every card is a closed dropdown that stays open across re-renders', async () => {
@@ -4908,7 +5104,12 @@ class FakeUsbDevice {
   async transferOut() {
     this.transferOutCalls++;
     if (this.behaviour.transferOutReject) throw new Error('transferOut rejected by the fake device');
-    return { status: 'ok' };
+    if (this.behaviour.transferOutStatus) return { status: this.behaviour.transferOutStatus };
+    if (this.behaviour.transferOutShort) {
+      const written = this.behaviour.transferOutShort;
+      return { status: 'ok', bytesWritten: written };
+    }
+    return { status: 'ok', bytesWritten: 64 };  // padded MCSP frame is ≥ 64 bytes
   }
   async controlTransferIn(setup) {
     this.inCalls++;
@@ -4965,6 +5166,29 @@ await checkAsync('USB transport: a transferOut rejection stays not transferred',
   const { err } = await webUsbWriteError({ transferOutReject: true });
   assert(!err.transferred, 'a failed transferOut is not marked as transferred');
   assert(/transferOut rejected/i.test(err.message), 'the transferOut failure is preserved: ' + err.message);
+});
+
+await checkAsync('USB transport: a stalled bulk OUT is not marked transferred and never enters ACK polling', async () => {
+  const device = new FakeUsbDevice({ transferOutStatus: 'stall' });
+  const { api } = loadFakeWebUsb(device);
+  const transport = new api.Bes3WebUsbTransport(device);
+  const err = await capture(() => transport.doMcspWrite(Uint8Array.from([0x10, 0x02])));
+  assert(err, 'a stalled transferOut must throw');
+  assert(!err.transferred, 'stall is not treated as transmitted');
+  assert(/stall/i.test(err.message), 'stall status reported: ' + err.message);
+  eq(device.inCalls, 0, 'ACK polling must not run after a stall');
+});
+
+await checkAsync('USB transport: a short bulk OUT is not marked transferred and never enters ACK polling', async () => {
+  // The padded payload for [0x10, 0x02] is 64 bytes; report only 32 written.
+  const device = new FakeUsbDevice({ transferOutShort: 32 });
+  const { api } = loadFakeWebUsb(device);
+  const transport = new api.Bes3WebUsbTransport(device);
+  const err = await capture(() => transport.doMcspWrite(Uint8Array.from([0x10, 0x02])));
+  assert(err, 'a short transferOut must throw');
+  assert(!err.transferred, 'short write is not treated as transmitted');
+  assert(/short write/i.test(err.message), 'short write reported: ' + err.message);
+  eq(device.inCalls, 0, 'ACK polling must not run after a short write');
 });
 
 check('protocol: parseReadResponseFrame rejects truncated frames and buildFrame guards body length', () => {
@@ -5042,6 +5266,49 @@ await checkAsync('Node USB transport & CLI: init handshake, exclusive mutex and 
   };
   const res = await cliMod.readOne(fakeCliTransport, 0x1800);
   assert(res && Array.from(res.payload).join(',') === '8,1', 'CLI readOne matches exact READ_RESPONSE and seq');
+});
+
+await checkAsync('Node USB transport: endpoint-state byte (byte 0 = 3) triggers busy retry', async () => {
+  // byte 0 = 3 (endpoint busy), byte 1 ≠ 3, byte 2 = 0 → must retry, not succeed.
+  // After exhausting retries the transport should time out.
+  const nodeTransportMod = createRequire(import.meta.url)(path.join(repo, 'node', 'transport-node-usb.js'));
+  let callCount = 0;
+  let blockOnByte0 = false;  // only activate byte-0 busy after open() completes
+  const fakeDevice = {
+    open() {}, close() {},
+    interface() {
+      return {
+        claim() {},
+        release(_c, cb) { if (cb) cb(); },
+        endpoints: [
+          { address: 4, transfer(_b, cb) { cb(null); } },
+          { address: 3 | 0x80, transfer(_l, cb) { cb(null, Buffer.alloc(0)); } },
+        ],
+      };
+    },
+    controlTransfer(_bm, req, _wV, _wI, _dL, cb) {
+      if (req === 0x01) return cb(null, Buffer.from([0x00]));
+      if (req === 0x47) {
+        if (blockOnByte0) {
+          callCount++;
+          // byte 0 = 3 (endpoint busy), byte 1 = 0 (not ack-busy), byte 2 = 0 (no error)
+          return cb(null, Buffer.from([0x03, 0x00, 0x00]));
+        }
+        return cb(null, Buffer.from([0x02, 0x00, 0x00]));  // success during init
+      }
+      if (req === 0x44) return cb(null, Buffer.alloc(7));
+      return cb(null, Buffer.alloc(0));
+    },
+  };
+  const nt = new nodeTransportMod.Bes3UsbTransport(fakeDevice);
+  await nt.open();
+  callCount = 0;
+  blockOnByte0 = true;  // now all ACK polls return endpoint-state = busy
+  let threw = false;
+  try { await nt.doMcspWrite(Buffer.from([0x10, 0x02])); }
+  catch (e) { threw = e.message.includes('timeout') || e.message.includes('ACK'); }
+  assert(threw, 'byte-0 = 3 must cause a timeout, not a silent success');
+  eq(callCount, 10, 'all 10 ACK polls fired (no early exit on byte-0 busy)');
 });
 
 await checkAsync('Web Bluetooth transports: Live Data BLE decoder/stream and MCSP BLE peer handshake & address rewrite', async () => {

@@ -32,7 +32,7 @@
   //          'short'  - the answer was too short to decide, try again
   function ackState(bytes) {
     if (!bytes || bytes.length < 3) return { state: 'short', status: null };
-    if (bytes[1] === 3) return { state: 'busy', status: null };
+    if (bytes[0] === 3 || bytes[1] === 3) return { state: 'busy', status: null };
     if (bytes[2] !== 0) return { state: 'error', status: bytes[2] };
     return { state: 'ok', status: 0 };
   }

@@ -21,7 +21,7 @@
   // the minor number for features and the patch number for fixes; keep the top
   // entry of docs/CHANGELOG.md in step (a source check enforces this). The
   // engine and UI read this from the policy object.
-  const VERSION = { version: '0.51.11', date: '2026-11-09' };
+  const VERSION = { version: '0.52.0', date: '2026-11-14' };
 
   // Every operation is experimental and carries an evidence label:
   //   observed-working  — a change was observed on at least one real bike
@@ -110,7 +110,11 @@
   function bytesFor(opId, value) {
     // Display-only preview of the payload; execution uses the engine encoders.
     if (opId === 'LIGHT_SWITCH' || opId === 'LIGHT_AVAILABLE') return value ? '08 01' : '08 00';
-    if (opId === 'LIGHT_CONFIG') return value ? ('08 0' + value) : '(empty)';
+    if (opId === 'LIGHT_CONFIG') {
+      const n = Number(value);
+      if (!value || !Number.isFinite(n) || n < 1 || n > 9) return '(empty)';
+      return '08 0' + n;
+    }
     if (opId === 'LIGHT_POWER') {
       const r = validateLightPower(value);
       if (!r.ok) return '';
@@ -161,7 +165,7 @@
     const requestedEnable = availableTouched && desired.available === true;
     const requestedDisable = availableTouched && desired.available === false;
 
-    if ((requestedEnable || requestedDisable) && current.available === null) {
+    if ((requestedEnable || requestedDisable) && current.available == null) {
       return err('Light output state could not be read on this bike, so it cannot be changed safely.');
     }
 
@@ -175,7 +179,7 @@
     }
 
     if (configTouched) {
-      if (current.available === null && !enabling) {
+      if (current.available == null && !enabling) {
         return err('Light output state could not be read, so the startup mode cannot be written safely.');
       }
       const installed = enabling || current.available === true;
@@ -204,7 +208,10 @@
   }
 
   // planLightSwitch(currentOn) -> { steps, error }
-  // The dedicated runtime on/off action: exactly one BIKE_LIGHT mutation.
+  // Returns exactly one BIKE_LIGHT mutation that toggles from the given state
+  // (turn-on step when currentOn is false, turn-off step when true).
+  // lightToggle() uses this only for the ON path (called with currentOn=false);
+  // the OFF path uses a LIGHT_AVAILABLE bounce and bypasses this function.
   function planLightSwitch(currentOn) {
     if (currentOn === null || currentOn === undefined) {
       return { steps: [], error: 'Light state could not be read, so it cannot be switched.' };

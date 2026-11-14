@@ -20,7 +20,6 @@
       [[138, 122], [232, 74]], [[226, 56], [232, 74]], [[232, 74], [260, 118]], [[120, 58], [116, 44]], [[104, 42], [128, 42]],
       [[226, 56], [222, 38]], [[212, 36], [236, 34]]],
     batt: [[150, 110], [212, 82]],
-    lamp: [240, 66],
   };
   window.Bes3BikeGeometry = GEO;
   const PAGE_W = 210; const PAGE_H = 297; const M = 14; const CW = PAGE_W - 2 * M;
@@ -554,7 +553,7 @@
       stroke(doc, CADENCE_COLORS.track); doc.setLineWidth(2.6); doc.setLineCap('butt');
       doc.line(cx0, y + 20.3, cx0 + cw2, y + 20.3);
       if (hasCadence) {
-        const frac = cadenceFill(cadenceRpm) / 120;
+        const frac = cadenceFill(cadenceRpm) / 100;
         fill(doc, CADENCE_COLORS.fill); doc.rect(cx0, y + 19, cw2 * frac, 2.6, 'F');
       }
       font(doc, 6.8, 'normal', C.muted);

@@ -14,7 +14,7 @@
   --text-2xl: clamp(2rem, 1.5rem + 2.2vw, 3.25rem);
 
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px; --s10: 40px; --s12: 48px; --s16: 64px;
-  --r-sm: 6px; --r: 10px; --r-lg: 14px; --r-xl: 20px;
+  --r: 10px; --r-lg: 14px; --r-xl: 20px;
   --ease: cubic-bezier(.2,.7,.2,1);
   --maxw: 1240px;
 }
@@ -84,6 +84,8 @@ p { margin: 0; }
 button { font: inherit; color: inherit; }
 a { color: var(--primary); }
 .mono { font-family: var(--font-mono); font-size: .92em; letter-spacing: -0.01em; }
+.break-any { overflow-wrap: anywhere; }
+.chip--wrap { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .muted { color: var(--ink-3); }
 .skip { position: absolute; left: -999px; top: 8px; background: var(--surface); padding: 8px 12px; border-radius: var(--r); z-index: 99; }
 .skip:focus { left: 8px; }
@@ -267,9 +269,9 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--text-sm); fon
 /* API availability hint */
 .api-hint { margin-top: var(--s3); }
 .api-hint ol { margin: var(--s2) 0 0; padding-left: 1.4em; }
-.api-hint ol li { margin-top: 4px; }
+.api-hint ol li { margin-top: var(--s1); }
 .api-hint__copy { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s2); }
-.api-hint__val { flex: 1 1 auto; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 4px var(--s3); font-family: var(--font-mono); font-size: var(--text-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: all; color: var(--ink); }
+.api-hint__val { flex: 1 1 auto; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: var(--s1) var(--s3); font-family: var(--font-mono); font-size: var(--text-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: all; color: var(--ink); }
 
 /* ---------- writer ---------- */
 /* Configure cards stack one after another instead of side by side, so a later
@@ -371,6 +373,7 @@ input.input[type=date], input.input[type=number] { font-family: var(--font-mono)
 .report__preview iframe { width: 100%; height: 78vh; min-height: 640px; border: 0; background: #fff; }
 .report__empty { display: grid; place-items: center; text-align: center; color: var(--ink-3); padding: var(--s10); font-size: var(--text-sm); }
 .form { display: grid; gap: var(--s4); }
+.form--compact { gap: 6px; }
 .form label { display: grid; gap: 6px; font-size: var(--text-sm); font-weight: 600; }
 .form textarea { min-height: 84px; resize: vertical; padding: 10px 12px; border-radius: var(--r); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); font: 400 var(--text-sm) var(--font-ui); }
 .check { display: flex; gap: 10px; align-items: center; font-size: var(--text-sm); font-weight: 500 !important; grid-template-columns: none !important; }
@@ -422,7 +425,6 @@ input.input[type=date], input.input[type=number] { font-family: var(--font-mono)
 .issue__p { font-size: var(--text-sm); color: var(--ink-2); margin: 4px 0 0; line-height: 1.5; max-width: 75ch; }
 .issue__foot { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; margin-top: 12px; font-size: var(--text-xs); }
 .issue__foot a { color: var(--primary); font-weight: 500; }
-.presets { flex-wrap: wrap; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1020px) {

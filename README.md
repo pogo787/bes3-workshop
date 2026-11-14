@@ -110,7 +110,7 @@ treated as proof that a value was applied.
 | Bike light installed | `DriveUnit.BIKE_LIGHT_AVAILABLE` | `0x1820` | `08 01` = enabled, empty = disabled |
 | Light startup config | `DriveUnit.BIKE_LIGHT_CONFIGURATION` | `0x1821` | `08 02` = remember last state on power-up, empty = `0` |
 | Light power register | `DriveUnit.BIKE_LIGHT_POWER` | `0x1822` | Field 1 varint = `round(input × 10)`. The Workshop bounds input to 1.0–18.0 in 0.1 steps. **The ×10 scaling and the register's electrical meaning are not independently verified.** The operation is marked `known-issue`: writes were acknowledged and read back on tested bikes without an observed change in lamp output. |
-| Light switch | `DriveUnit.BIKE_LIGHT` | `0x181c` | `08 01` = on, empty = off |
+| Light switch | `DriveUnit.BIKE_LIGHT` | `0x181c` | `08 01` = on. Turn-off uses an availability bounce (`BIKE_LIGHT_AVAILABLE` false → true) on firmware versions where a direct `08 00` write is silently ignored. |
 | Service interval | `RemoteControl.SERVICE_DUE` | `0x2185` | `{1: Timestamp{1: sint64 seconds}, 2: uint32 meters}`, empty = cleared |
 | System ID sync | `RemoteControl.BIKE_ID` | `0x2184` | `0a 12 0a 10 <16-byte UUID>` (matched against `DriveUnit.BIKE_ID` `0x182c`) |
 | Low Power Port | `DriveUnit.LOW_POWER_PORT_ACTIVE` | `0x1831` | `08 01` = enable, `08 00` = disable (**experimental, untested**) |
@@ -120,7 +120,7 @@ The power-port rows are the Workshop's own unverified payload assumption. The
 address registry lists both registers with kind `unknown` and no confirmed
 encoding; a matching read-back does not establish a physical effect, correct
 wiring or persistence after a restart. No hardware validation has been
-performed. A port whose stored payload already matches is never written;
+performed. A port whose freshly read payload already matches is never written;
 unknown values are never treated as off. Both port registers are
 normal-tier, so the staged batch needs no typed-name confirmation, but it still
 uses the one-shot grant, one write and a read-back.

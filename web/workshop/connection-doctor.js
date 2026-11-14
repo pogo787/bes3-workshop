@@ -122,6 +122,20 @@
       };
     }
 
+    if (name === 'InvalidStateError' || /no longer connected|device.*disconnected/i.test(low)) {
+      return {
+        id: 'open-failed',
+        title: 'The USB device is no longer connected',
+        summary: 'The device was found but disconnected before or during the session. The eBike may have gone to sleep or the cable was unplugged.',
+        failed: ['The USB device disconnected during the session.'],
+        steps: [
+          'Keep the eBike switched on during the connection.',
+          'Replug the cable and retry.',
+          'Close other tools that may reset the device.',
+        ],
+      };
+    }
+
     if (lost) {
       return {
         id: 'connection-lost',

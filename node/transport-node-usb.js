@@ -145,8 +145,8 @@ class Bes3UsbTransport {
         await sleep(20);
         continue;
       }
-      if (ack[1] === 3) {
-        // busy / transfer still running, retry
+      if (ack[0] === 3 || ack[1] === 3) {
+        // byte 0: endpoint state (3 = still busy); byte 1: acknowledgement kind (3 = busy)
         await sleep(20);
         continue;
       }

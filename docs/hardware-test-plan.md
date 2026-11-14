@@ -76,7 +76,8 @@ Start with the observed-working operations, one per session:
 | --- | --- | --- | --- |
 | 3a | Mark light installed | `BIKE_LIGHT_AVAILABLE` `0x1820` | observed-working (one bike) |
 | 3b | Service interval set/clear | `RemoteControl.SERVICE_DUE` `0x2185` | observed-working (one bike) |
-| 3c | Light switch on/off | `BIKE_LIGHT` `0x181c` | observed-working (one bike) |
+| 3c | Light switch on | `BIKE_LIGHT` `0x181c` | observed-working (one bike) |
+| 3d | Light switch off | `BIKE_LIGHT_AVAILABLE` `0x1820` bounce (false → true) | observed-working (one bike) — direct `BIKE_LIGHT=false` ignored on BRC3100 firmware |
 
 Per-write procedure:
 

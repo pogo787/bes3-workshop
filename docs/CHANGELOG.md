@@ -6,6 +6,223 @@ single source of truth; every commit that changes behaviour bumps that version
 and adds an entry here, newest first. The top entry below must match
 `POLICY.VERSION` (a source check enforces this).
 
+## 0.52.0 — 2026-11-14
+
+### WP2 — Verified writes over BLE MCSP
+
+- **feat(ui):** Configuration tab is now enabled for BLE MCSP sessions. The
+  `writeTab.disabled = isBle` blanket lock is removed. The connection pill
+  reads "Connected (BLE MCSP)" instead of "Connected (BLE, read-only)". The
+  write-view banner is now an informational note about higher latency rather
+  than a hard read-only blocker. The reconnect picker note is updated to
+  match.
+- All write safety gates remain transport-agnostic: `writeVerified`,
+  `judgeWrite`, one-shot grants, single-writer lock, typed-name confirmation
+  and independent read-back apply equally to BLE MCSP. Transport-aware
+  settle/re-read timing (1500 ms + 1500 ms + 2000 ms third look) was already
+  in place since 0.51.5.
+
+### WP3 — Read-only assist-mode fallback probe (experimental, 0x183E → 0x108B)
+
+- **feat(engine):** After reading the active assist-mode list (0x184E),
+  `readAssistModes` now also reads `REQUIRED_ASSIST_MODES_UPPER` (0x183E) and
+  calls `GET_ASSIST_MODE_INFORMATION` (0x108B) for any config-id not already
+  in the active set. Results are stored in `state.extraAssistModes` separately
+  from `state.assistModes` — the existing ride-statistics path is unchanged.
+  This is a read-only probe; no new write operations are introduced.
+  **Status: experimental / not hardware-verified** — based on BikeBridge
+  research reference (read-only; no code copied). May not return additional
+  modes on all firmware versions.
+- **feat(ui):** If `extraAssistModes` is non-empty, an "Additional modes
+  (experimental, 0x183E)" section appears on the Overview below the existing
+  assistance-modes table, showing config-id and short name.
+- `state.extraAssistModes` is exported, reset on import, and cleared with
+  `state.assistModes` across all session transitions.
+
+### Tests
+
+- `WP2 source`: source-level check that the old BLE read-only tab lock is gone
+  and a latency notice replaces it.
+- `WP2 engine`: engine test confirms `canMutate=true` for ble-mcsp + exactly
+  one mutation frame per write with correct ack/apply result.
+- `WP3 engine`: test confirms `GET_ASSIST_MODE_STATISTICS` (0x108C) is never
+  called with ids from 0x183E; the no-unexpected-stats-call invariant is
+  enforced even when the fake transport does not serve 0x108B responses.
+- Suite: **236** (was 233).
+
+## 0.51.16 — 2026-11-11
+
+- **fix(transport-webusb):** `transferOut` result is now inspected before
+  entering ACK polling. A stalled bulk OUT (`status === 'stall'`) or a short
+  write (`bytesWritten < padded.byteLength`) now throws immediately with
+  `transferred = false`, so the engine correctly reports "never sent" rather
+  than "possibly sent". Previously the `USBOutTransferResult` was discarded
+  and `transferred = true` was set unconditionally.
+- **fix(transport-node-usb):** ACK busy check now includes `ack[0] === 3`
+  (endpoint state) in addition to `ack[1] === 3` (acknowledgement kind),
+  matching the browser `ackState` helper added in 0.51.13.
+- **docs(ROADMAP):** Replaced pre-0.5.0 "Done (this batch)" section with a
+  current-state "Completed" list. Consolidated Near/Mid-term items; removed
+  completed-in-0.5.0 and historical batch notes.
+- **docs(check-workshop-light):** Added a classification header above the
+  source-level checks block identifying which checks are safety tripwires
+  (write-path structural boundaries) vs. cosmetic/labeling checks. Reduces
+  confusion when a UI change breaks a cosmetic check.
+- **test:** Two new USB transport tests: stalled bulk OUT is not marked
+  transferred and does not enter ACK polling; short bulk OUT likewise. One new
+  Node transport test: endpoint-state byte-0 = 3 triggers retry and exhausts
+  all 10 polls. Suite: **233** (was 230).
+
+## 0.51.15 — 2026-11-10
+
+- **fix(ui):** `portChanges` now treats an empty read-back payload (proto3
+  implicit zero) as semantically equivalent to explicit `08 00` when deciding
+  whether a port already matches the requested state. Previously a register
+  that read back as empty while `choice='disable'` would always stage a
+  redundant disable write, contradicting the documented promise "a port whose
+  freshly read payload already matches is never written."
+- **fix(ui):** Removed misleading `continueOnFailure: true` from the last step
+  of the light-toggle off path. The flag has no behavioral effect on the final
+  step (no subsequent step exists); a clarifying comment replaces it.
+- **fix(tools):** `export-for-review.mjs` now prints an explicit privacy
+  warning to stdout when run, and embeds a warning in the output file header.
+  The script is also added to `public-exclude.txt` so its developer-path
+  references do not trigger the public-tree privacy scan.
+- **fix(engine):** `importWorkshop` now has a comment explaining why
+  `json.log` is intentionally not restored — to prevent imported write history
+  from misleading the user about the current session's activity.
+- **docs:** ROADMAP.md documents the `continueOnFailure` exception to the
+  stop-on-first-unverified rule, listing the exact permitted scope.
+- **test:** Added behavioral regression test for the `portChanges` empty-payload
+  fix: verifies that an empty-hex port read (implicit off) is not staged for
+  disable, while an explicit-on read is. Suite: **230** (was 229).
+
+## 0.51.14 — 2026-11-10
+
+- **fix(report-pdf):** Cadence bar was capped at 83% because the percent
+  result of `cadenceFill()` was divided by 120 instead of 100. Bar now
+  correctly reaches full width at 120 rpm.
+- **fix(engine):** `drain()` now catches `readNextFrame` throws; an
+  unexpected transport error no longer propagates as an unhandled rejection.
+- **fix(engine):** `probeRemoteRegisters()` now checks `ctxCurrent` before
+  storing results, so a transport loss during the probe cannot overwrite the
+  cleared state set by `handleTransportLoss`.
+- **fix(engine):** `handleTransportLoss` now always resets `state.mode`
+  regardless of whether the prior mode was `'demo'`.
+- **fix(engine):** `rawRead` / `rawReadWithAttempts` now accept per-transport
+  timeout and attempt parameters; BLE-MCSP sessions use 5 attempts with
+  700 ms / 1000 ms timeouts (was 3 × 450/700 ms for all transports).
+- **fix(engine):** `runPlan` grant now uses `steps[i].bytes != null` as the
+  existence check and normalises empty string to `'(empty)'`, so a step with
+  an explicit empty payload is never incorrectly blocked by the approval gate.
+- **fix(engine):** `BIKE_LIGHT_CONFIGURATION_OEM` (0x181F) now has its own
+  `decodeField1Varint` branch, matching `BIKE_LIGHT_CONFIGURATION`.
+- **fix(ui):** `promptReconnect` sets `connectAttemptInProgress = true`
+  before opening the dialog, closing a race where a concurrent "Connect USB"
+  click could start a second session while the picker was open.
+- **fix(ui):** Light toggle hint now distinguishes `available === null`
+  (unknown) from `available === false` (disabled). Apply button label and
+  colour also corrected for the unknown state.
+- **fix(ui):** `applyLight` wraps `lightSteps()` in try/catch; an unknown
+  op no longer silently drops the Apply action.
+- **fix(ui):** `serviceTarget()` sanitises NaN timestamps from invalid date
+  inputs so a malformed custom date cannot reach `encodeServiceDue`.
+- **fix(ui):** `previewPdf` creates the new object URL before revoking the
+  old one, preventing a brief stale reference.
+- **fix(ui):** Progress bar `pct` guarded against NaN when total is zero.
+- **fix(ui):** `"live via USB"` label in the overview now correctly shows
+  `"live via Bluetooth (MCSP)"` or `"live via Bluetooth (Live Data)"` for
+  non-USB sessions.
+- **fix(issues):** `strip()` now also decodes `&lt;`, `&gt;`, `&quot;`, and
+  `&#160;` / `&#xA0;` from Bosch error catalog HTML.
+- **fix(usb-ack):** `ackState` now also checks `bytes[0] === 3` (endpoint
+  state) as the comment documents, not only `bytes[1]`.
+- **fix(connection-doctor):** `InvalidStateError` and "no longer connected"
+  messages are now classified as `open-failed` with appropriate advice,
+  rather than falling through to the generic handler.
+- **fix(write-policy):** `planLight` guards use `== null` (catches both
+  `null` and `undefined`) instead of `=== null` for `current.available`.
+- **fix(demo):** Light switch prerequisite now uses `p[1] !== 0x00` for
+  consistency with `boolTrue()`, accepting any valid non-zero protobuf bool.
+- **refactor(engine):** Extracted `idleOrFile()` helper for the repeated
+  `Object.keys(state.values).length ? 'file' : 'idle'` expression (10 uses).
+- **refactor(ui):** `ok()` and `val()` reduce V() lookup count per call.
+  `yn` shadow renamed `ynBool` in `bleLiveCard`. `tr` shadow renamed
+  `topReconnectBtn`. `reconnectModes()` destructures `apiAvail()` once.
+  `portPayloadLabel` references `PORT_PAYLOAD` constants. Redundant ternary
+  in `pendingItem` removed. Dead `PENDING_TIER_LABEL` entries removed.
+  `entryReadable(null)` now returns `false`. `indexOf` → `includes`.
+  `btnReread` / `btnDisconnect` cached. `evidence` uses `?? 'Untested'`.
+  `runFor` error message clarified. `serviceReasons` computed once.
+  `?? null` replaces `=== undefined ? null :` pattern. Dead `wlNoMatch` id
+  removed. Duplicate "max 64 bytes" hint removed. Indentation fixed.
+  Arrow wrapper functions removed. `entry.unit` escaped in Write Lab label.
+- **refactor(report-pdf):** Dead `GEO.lamp` coordinate removed.
+- **refactor(css):** `api-hint` spacing tokens use `var(--s1)` instead of
+  hardcoded `4px`.
+- **docs:** WORKSHOP.md toggle description corrected (bounce only for off,
+  not both directions).
+- **test:** Cadence test updated for `/100` fix. `writeLabResultsHtml`,
+  `demoNoticeHtml`, `writeLabFriendlyInput` added to SCANNED_HELPERS;
+  stale `banner` and `stamp` removed from SAFE_FRAGMENTS. check-all now
+  has 279 checks (was 276). Suite count unchanged at 229.
+
+## 0.51.13 — 2026-11-10
+
+- **fix(demo):** `demo.js` now handles explicit `08 00` for false in addition
+  to empty payload when checking BIKE_LIGHT prerequisites and clearing the
+  light state on BIKE_LIGHT_AVAILABLE=false. Writers send `[0x08, 0x00]`
+  since 0.51.9; the demo was still checking `!p.length` (proto3 implicit).
+- **fix(ui):** `demoNote` was double-wrapped — the `demoNote` string already
+  contains a full `<div class="section">`, so the surrounding conditional
+  wrapper was removed.
+- **fix(ui):** `reconnectModes()` now returns `reason: ''` for BLE-MCSP and
+  BLE Live when the mode is available, matching the USB mode's pattern.
+  Previously the reason was always set to the "module not loaded" string
+  even when the mode was fully available.
+- **fix(ui):** `yesNo` null-guard uses `== null` consistently with all other
+  nullish helpers in the file.
+- **refactor(engine):** `consecutiveFailures` asymmetry (send += 2, keepalive
+  += 1) documented with a block comment explaining the rationale. First-look
+  settle time comment added. Third-look BLE-only comment clarified.
+- **refactor(policy):** `planLightSwitch` comment updated: describes the
+  function as symmetric (both ON and OFF), notes that `lightToggle()` only
+  calls it for the ON path. `bytesFor` LIGHT_CONFIG range-validated.
+- **refactor(css):** Removed duplicate `.presets { flex-wrap: wrap; }` rule.
+- **docs:** `hardware-test-plan.md` row 3c split into 3c (light on) and 3d
+  (light off via AVAILABLE bounce). `README.md` "stored payload" →
+  "freshly read payload". `workshop-write-safety.md` suite count updated.
+- **test:** Renamed `planLightSwitch` test to clarify it covers both
+  directions but `lightToggle()` only uses it for ON. Added UI test for the
+  turn-off 2-step AVAILABLE bounce: asserts 2 frames, both BIKE_LIGHT_AVAILABLE,
+  both applied, and BIKE_LIGHT reads off after an explicit re-read.
+  Suite: **229** (was 228).
+
+## 0.51.12 — 2026-11-09
+
+- **refactor(engine):** Trailing space removed from `sessionMode` comment.
+  Added a comment explaining the known `state.mode`/`state.demo` divergence
+  after a simulated connection loss during demo mode.
+- **refactor(policy):** `planLightSwitch` doc comment updated: "dedicated
+  runtime on/off action" → "turn-on action" with note that turn-off uses the
+  AVAILABLE bounce. `bytesFor` for `LIGHT_CONFIG` now validates the value is
+  finite before string-concatenating.
+- **refactor(ui):** Comments tightened throughout `lightToggle`: ON branch
+  explains metadata-borrow pattern from `planLightSwitch`; OFF bounce step 2
+  explains why `continueOnFailure: true` is safe. `portPayloadLabel` comment
+  clarifies that write payloads are always explicit `08 00`; empty read-backs
+  are still treated as off (proto3 implicit zero). BLE tab-disable comment
+  drops the temporal hedge "at this time". `lightPlanResult` comment updated
+  from "planLightSwitch" to "lightToggle()". `bikeLight` value in
+  `bleLiveCard` normalised to lowercase (`'on'`/`'off'`) to match sibling
+  fields.
+- **docs:** `docs/workshop-write-safety.md` action matrix row updated: "Switch
+  light on/off (runtime)" → "Toggle light" with correct register description
+  for the availability bounce. Light switch exception paragraph rewritten to
+  describe the turn-on/turn-off asymmetry. `WORKSHOP.md` and `README.md`
+  updated with new button name and turn-off mechanism. `docs/write-path-map.md`
+  light switch section updated.
+
 ## 0.51.11 — 2026-11-09
 
 - **fix(ui):** Light switch button renamed to "Toggle light" and modal title

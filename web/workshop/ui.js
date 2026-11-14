@@ -80,13 +80,14 @@
 
   // ------------------------------------------------------------ data access
   const V = (k) => S.values[k] || null;
-  const ok = (k) => !!(V(k) && V(k).status === 'ok');
+  const ok = (k) => { const e = V(k); return !!(e && e.status === 'ok'); };
   const val = (k) => {
     // Values come from the bike or from an imported file: they are coerced to a
     // primitive before they are used, so a malformed value can never break the
     // renderer.
-    if (!ok(k)) return null;
-    const v = V(k).value;
+    const entry = V(k);
+    if (!entry || entry.status !== 'ok') return null;
+    const v = entry.value;
     if (typeof v === 'number') return Number.isFinite(v) ? v : null;
     if (typeof v === 'string') return v.length > 4096 ? v.slice(0, 4096) : v;
     if (typeof v === 'boolean') return v;
@@ -197,6 +198,7 @@
     const idConflict = !!(duId && rcId && String(duId).toLowerCase() !== String(rcId).toLowerCase());
     const issues = (S.issues || []).map((i) => (window.Bes3Issues ? window.Bes3Issues.enrich(i) : i));
     const modes = (S.assistModes || []).map((m, i) => ({ ...m, color: m.color || PALETTE[i % PALETTE.length] }));
+    const extraModes = S.extraAssistModes || [];
     return {
       brand: disp('DriveUnit.OEM_BRAND_NAME', null),
       line: disp('DriveUnit.PRODUCT_LINE', null),
@@ -248,7 +250,7 @@
       powerOnH: val('DriveUnit.POWER_ON_TIME'),
       supportH: val('DriveUnit.POWER_ON_TIME_WITH_MOTOR_SUPPORT'),
       cadence: val('DriveUnit.AVERAGE_RIDER_CADENCE'),
-      comps, modes, duId, rcId, idConflict,
+      comps, modes, extraModes, duId, rcId, idConflict,
       eShift: val('RemoteControl.E_SHIFT_AVAILABLE'),
       ports: {
         low: V('DriveUnit.LOW_POWER_PORT_ACTIVE'),
@@ -275,7 +277,7 @@
   const fmtDate = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '–');
   const fmtDateTime = (d) => d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   const fmtW = (w) => (w == null ? '–' : `${NF1.format(w)} W`);
-  const yesNo = (b) => (b === null || b === undefined ? '–' : b ? 'Yes' : 'No');
+  const yesNo = (b) => (b == null ? '–' : b ? 'Yes' : 'No');
   function serviceText(sv) {
     if (!sv || !sv.set) return 'Not set';
     const date = sv.timestamp ? fmtDate(sv.timestamp) : null;
@@ -425,7 +427,7 @@
     if (!S.bleLive) return '';
     const v = S.bleLive.values || {};
     const has = (k) => Object.prototype.hasOwnProperty.call(v, k) && v[k] !== null && v[k] !== undefined;
-    const yn = (b) => (b ? 'yes' : 'no');
+    const ynBool = (b) => (b ? 'yes' : 'no');
     const items = [
       ['Speed',                 has('speedKmh')            ? Number(v.speedKmh).toFixed(1) + ' km/h'                                   : null],
       ['Cadence',               has('cadenceRpm')          ? String(v.cadenceRpm) + ' rpm'                                             : null],
@@ -434,12 +436,12 @@
       ['Battery SoC',           has('batterySocPercent')   ? String(v.batterySocPercent) + ' %'                                        : null],
       ['Bike time (UTC)',        has('timeUnixSeconds')     ? new Date(Number(v.timeUnixSeconds) * 1000).toISOString()                  : null],
       ['Odometer',              has('odometerMeters')      ? (Number(v.odometerMeters) / 1000).toFixed(1) + ' km'                      : null],
-      ['Bike light',            has('bikeLight')           ? String(v.bikeLight)                                                       : null],
-      ['System locked',         has('systemLocked')        ? yn(v.systemLocked)                                                        : null],
-      ['Charger connected',     has('chargerConnected')    ? yn(v.chargerConnected)                                                    : null],
-      ['Light reserve',         has('lightReserveState')   ? yn(v.lightReserveState)                                                   : null],
-      ['Diagnosis tool active', has('diagnosisProgramActive')? yn(v.diagnosisProgramActive)                                            : null],
-      ['Bike not driving',      has('bikeNotDriving')      ? yn(v.bikeNotDriving)                                                      : null],
+      ['Bike light',            has('bikeLight')           ? String(v.bikeLight).toLowerCase()                                                : null],
+      ['System locked',         has('systemLocked')        ? ynBool(v.systemLocked)                                                        : null],
+      ['Charger connected',     has('chargerConnected')    ? ynBool(v.chargerConnected)                                                    : null],
+      ['Light reserve',         has('lightReserveState')   ? ynBool(v.lightReserveState)                                                   : null],
+      ['Diagnosis tool active', has('diagnosisProgramActive')? ynBool(v.diagnosisProgramActive)                                            : null],
+      ['Bike not driving',      has('bikeNotDriving')      ? ynBool(v.bikeNotDriving)                                                      : null],
     ].filter(([, val]) => val !== null);
     const active = !!S.bleLive.active;
     let badge, status, body;
@@ -476,27 +478,28 @@
     if (S.mode === 'connecting') { st = 'busy'; txt = 'Connecting …'; }
     else if (S.mode === 'reading') { st = 'busy'; txt = 'Reading …'; }
     else if (S.demo && W.isLive) { st = 'demo'; txt = 'Demo · simulated'; }
-    else if (W.isLive) { st = 'live'; txt = isBle ? 'Connected (BLE, read-only)' : 'Connected'; }
+    else if (W.isLive) { st = 'live'; txt = isBle ? 'Connected (BLE MCSP)' : 'Connected'; }
     else if (S.bleLive && S.bleLive.active) { st = 'live'; txt = 'Live Data (BLE)'; }
     else if (S.connectionLost) { st = 'lost'; txt = 'Connection lost'; }
     else if (S.mode === 'file') { st = 'file'; txt = 'Saved readout'; }
     pill.dataset.state = st; $('connText').textContent = txt;
     $('tabs').hidden = !hasData();
-    // Disable the Configuration tab during a BLE MCSP session: the transport
-    // supports reading but writes are not available over BLE at this time.
-    const writeTab = document.querySelectorAll && document.querySelectorAll('.tab[data-tab="write"]')[0];
+    // The Configuration tab is now enabled for BLE MCSP sessions. Writes go
+    // through the same verified path (writeVerified + independent read-back)
+    // as USB, with transport-aware settle/re-read timing already in place.
+    const writeTab = document.querySelector('.tab[data-tab="write"]');
     if (writeTab) {
-      writeTab.disabled = isBle;
-      writeTab.title = isBle ? 'Configuration is not available over Bluetooth. Connect via USB to write.' : '';
-      // If the user is already on the write tab and BLE connects, redirect them.
-      if (isBle && tab === 'write') { tab = 'read'; setTab('read'); }
+      writeTab.disabled = false;
+      writeTab.title = '';
     }
-    $('btnReread').hidden = !(W.isLive && hasData() && !busy && !writing);
-    $('btnReread').disabled = busy || writing;
-    const tr = $('btnTopReconnect'); if (tr) tr.hidden = W.isLive || !hasData() || busy;
+    const btnReread = $('btnReread');
+    btnReread.hidden = !(W.isLive && hasData() && !busy && !writing);
+    btnReread.disabled = busy || writing;
+    const topReconnectBtn = $('btnTopReconnect'); if (topReconnectBtn) topReconnectBtn.hidden = W.isLive || !hasData() || busy;
     const liveData = !!(S.bleLive && S.bleLive.active);
-    $('btnDisconnect').hidden = !(W.isLive || liveData || S.mode === 'file');
-    $('btnDisconnect').textContent = (W.isLive || liveData) ? 'Disconnect' : 'Close';
+    const btnDisc = $('btnDisconnect');
+    btnDisc.hidden = !(W.isLive || liveData || S.mode === 'file');
+    btnDisc.textContent = (W.isLive || liveData) ? 'Disconnect' : 'Close';
     $('progress').hidden = !busy;
     updatePhotoButton();
     const showStart = !hasData() && !busy;
@@ -527,9 +530,9 @@
   // Container style for evidence chips: each chip sits on its own line under the
   // control's title/description, and the row wraps instead of overflowing.
   const CHIP_ROW_STYLE = 'display:flex;flex-wrap:wrap;gap:6px;min-width:0';
-  const chip = (txt, cls = '', title = '', style = '') => {
+  const chip = (txt, cls = '', title = '', extraClass = '') => {
     const ic = CHIP_ICON[cls] ? ICON[CHIP_ICON[cls]].replace(/width="1[46]" height="1[46]"/, 'width="12" height="12"') : '';
-    return `<span class="chip ${cls}"${title ? ` title="${esc(title)}"` : ''}${style ? ` style="${style}"` : ''}>${ic}${esc(txt)}</span>`;
+    return `<span class="chip ${cls}${extraClass ? ' ' + extraClass : ''}"${title ? ` title="${esc(title)}"` : ''}>${ic}${esc(txt)}</span>`;
   };
   // Wrap evidence chips in a full-width, wrapping row so they never overflow a
   // card. Returns '' when there are no chips.
@@ -554,7 +557,7 @@
     const d = POLICY.describeOp(opId);
     if (!d) return '';
     const short = EVIDENCE_SHORT[d.evidence] || d.evidenceLabel || d.evidence;
-    return chip(short, 'chip--warn', d.evidenceNote, 'max-width:100%;white-space:normal;overflow-wrap:anywhere');
+    return chip(short, 'chip--warn', d.evidenceNote, 'chip--wrap');
   }
   const experimentalChip = () => chip('Experimental', 'chip--warn');
   // Exactly one warning chip per Configuration card, placed in its header. The
@@ -573,7 +576,7 @@
     const labels = Array.from(new Set(info.map((d) => EVIDENCE_SHORT[d.evidence] || d.evidenceLabel)));
     const label = labels.length > 1 ? 'Mixed evidence' : (labels[0] || 'Untested');
     const notes = Array.from(new Set(info.map((d) => d.evidenceNote).filter(Boolean))).join(' · ');
-    return chip('Experimental · ' + label, 'chip--warn', notes, 'max-width:100%;white-space:normal;overflow-wrap:anywhere');
+    return chip('Experimental · ' + label, 'chip--warn', notes, 'chip--wrap');
   }
 
   function issueCard(i) {
@@ -735,7 +738,7 @@
             <div>
               <div class="bike__brand">${esc(d.brand || 'Bosch Smart System')}${d.category ? ` · ${esc(d.category)}` : ''}</div>
               <h1 class="bike__name">${esc(d.line || 'eBike')}</h1>
-              <p class="section__sub" style="margin-top:6px">Read on ${fmtDateTime(d.readAt)} · ${d.simulated ? 'demo data (simulated)' : d.source === 'file' ? 'from saved file' : 'live via USB'}</p>
+              <p class="section__sub" style="margin-top:6px">Read on ${fmtDateTime(d.readAt)} · ${d.simulated ? 'demo data (simulated)' : d.source === 'file' ? 'from saved file' : S.transportKind === 'ble-live' ? 'live via Bluetooth (Live Data)' : S.transportKind === 'ble-mcsp' ? 'live via Bluetooth (MCSP)' : 'live via USB'}</p>
             </div>
             <div class="bike__chips">
               ${allGood ? chip('All good', 'chip--ok') : d.issuesScanned ? chip('Needs attention', 'chip--warn') : ''}
@@ -838,6 +841,9 @@
       ${modeRows ? `<div class="section"><div class="section__head"><div><h2 class="section__title">Assistance modes</h2><p class="section__sub">Current parameters per mode</p></div></div>
         <div class="card table-wrap"><table class="t"><thead><tr><th>Mode</th><th class="num">Assistance</th><th class="num">Dynamics</th><th class="num">Max. speed</th><th class="num">Max. torque</th><th class="num">Max. power</th></tr></thead><tbody>${modeRows}</tbody></table></div></div>` : ''}
 
+      ${d.extraModes.length ? `<div class="section"><div class="section__head"><div><h2 class="section__title">Additional modes ${chip('Experimental', 'chip--warn', 'Read from REQUIRED_ASSIST_MODES_UPPER (0x183E) via GET_ASSIST_MODE_INFORMATION (0x108B). Not hardware-verified on all firmware versions.')}</h2><p class="section__sub">Modes installed on the bike but not in the active set — names and colours only, no ride statistics</p></div></div>
+        <div class="card table-wrap"><table class="t"><thead><tr><th>Config ID</th><th>Name</th></tr></thead><tbody>${d.extraModes.map((m) => `<tr><td class="mono">${esc(m.configId || '–')}</td><td>${esc(m.nameShort || m.nameLong || '–')}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
+
 
     `;
   }
@@ -890,12 +896,10 @@
   }
   function pendingKey(step) { return step.component + '.' + step.name; }
   const PENDING_TIER_LABEL = {
-    'dedicated':        'Verified',
-    'normal':           'Normal',
-    'high-impact':      'High impact',
+    'dedicated':         'Verified',
+    'normal':            'Normal',
+    'high-impact':       'High impact',
     'registry-readonly': 'Read-only in registry',
-    'unavailable-live': 'Unavailable live',
-    'blocked':          'Blocked',
   };
   function pendingTier(step) {
     return step.op === 'GENERIC_WRITE' ? POLICY.genericTier(step.component, step.name).tier : 'dedicated';
@@ -913,7 +917,7 @@
   function pendingItem(step, source) {
     const info = approvalInfo(step);
     const tier = pendingTier(step);
-    const op = POLICY.describeOp(step.op === 'GENERIC_WRITE' ? 'GENERIC_WRITE' : step.op);
+    const op = POLICY.describeOp(step.op);
     return {
       key: pendingKey(step), source, step,
       op: step.op, component: step.component, name: step.name,
@@ -923,7 +927,7 @@
       newDisplay: step.intended != null ? step.intended : intendedDisplay(step),
       bytes: step.bytes || '(empty)',
       tier,
-      evidence: op ? op.evidenceLabel : 'Untested',
+      evidence: op?.evidenceLabel ?? 'Untested',
       evidenceNote: op ? op.evidenceNote : '',
       risky: tier === 'high-impact' || tier === 'registry-readonly',
       warning: pendingWarning(step, tier),
@@ -1058,7 +1062,7 @@
   }
   function genericTargetKey(t) { return t.component + '.' + t.name; }
   function entryReadable(entry) {
-    return !(entry && entry.readable === false);
+    return entry != null && entry.readable !== false;
   }
   function writeLabComponentList() {
     const entries = genericTargets();
@@ -1067,7 +1071,7 @@
   function writeLabActiveComponents() {
     const present = writeLabComponentList().map(([c]) => c);
     if (!Array.isArray(draft.advanced.components)) return new Set(present);
-    return new Set(draft.advanced.components.filter((c) => present.indexOf(c) !== -1));
+    return new Set(draft.advanced.components.filter((c) => present.includes(c)));
   }
   // The visible list depends only on the component filter and the search text.
   // It is computed once per render and once per keystroke, never twice for the
@@ -1081,7 +1085,7 @@
     if (writeLabFilteredCache && writeLabFilteredCache.key === key) return writeLabFilteredCache.list;
     const list = genericTargets()
       .filter((e) => active.has(e.component))
-      .filter((e) => !q || `${e.label} ${e.name} ${e.component} 0x${e.address.toString(16)}`.toLowerCase().indexOf(q) !== -1)
+      .filter((e) => !q || `${e.label} ${e.name} ${e.component} 0x${e.address.toString(16)}`.toLowerCase().includes(q))
       .filter((e) => !onlyRead || !!(S.values[genericTargetKey(e)] && S.values[genericTargetKey(e)].status === 'ok'))
       .sort((a, b) => String(a.label).localeCompare(String(b.label)));
     writeLabFilteredCache = { key, list };
@@ -1101,7 +1105,7 @@
   // Enter, which then rebuilds the card.
   function writeLabResultsHtml(entries, selectedKey, cursor) {
     if (!entries.length) {
-      return `<div class="field__hint" id="wlNoMatch" role="status">No matching register. Clear the search or the component filter.</div>`;
+      return `<div class="field__hint" role="status">No matching register. Clear the search or the component filter.</div>`;
     }
     return entries.map((e, i) => {
       const key = genericTargetKey(e);
@@ -1324,11 +1328,11 @@
       return `<label class="check"><input type="checkbox" id="wlBool"> Value (boolean)</label>`;
     }
     if (kind === 'uint' || kind === 'normFactor') {
-      return `<label class="form" style="gap:6px"><span class="field__label" style="margin:0">Value (${kind === 'normFactor' ? 'number' + (entry.unit ? ', ' + entry.unit : '') : 'number'})</span>
+      return `<label class="form form--compact"><span class="field__label" style="margin:0">Value (${kind === 'normFactor' ? 'number' + (entry.unit ? ', ' + esc(entry.unit) : '') : 'number'})</span>
         <input class="input" id="wlNumber" type="number" step="${kind === 'normFactor' ? 'any' : '1'}" autocomplete="off" placeholder="…"></label>`;
     }
     if (kind === 'string') {
-      return `<label class="form" style="gap:6px"><span class="field__label" style="margin:0">Value (text)</span>
+      return `<label class="form form--compact"><span class="field__label" style="margin:0">Value (text)</span>
         <input class="input" id="wlText" type="text" autocomplete="off" placeholder="e.g. en"></label>`;
     }
     if (kind === 'enum') {
@@ -1337,11 +1341,11 @@
         try { payload = W.util.toHex(W.util.encodeEnumArg(Number(k))); } catch (_) { payload = ''; }
         return `<option value="${esc(k)}">${esc(v.label || v.name)} (${esc(k)})${payload ? ' — ' + esc(payload) : ''}</option>`;
       }).join('');
-      return `<label class="form" style="gap:6px"><span class="field__label" style="margin:0">Value (known enum, payload shown)</span>
+      return `<label class="form form--compact"><span class="field__label" style="margin:0">Value (known enum, payload shown)</span>
         <select class="select" id="wlEnum"><option value="">— choose a value —</option>${options}</select></label>`;
     }
     if (kind === 'unixTimestamp') {
-      return `<label class="form" style="gap:6px"><span class="field__label" style="margin:0">Value (date and time)</span>
+      return `<label class="form form--compact"><span class="field__label" style="margin:0">Value (date and time)</span>
         <input class="input" id="wlTime" type="datetime-local"></label>`;
     }
     return '';
@@ -1363,8 +1367,8 @@
   function lightPlanResult() {
     const cur = summary().light;
     const dr = draft.light;
-    // Switching the light on or off is a direct action (planLightSwitch), not
-    // part of this staged plan, so no switchOn flag is passed here.
+    // Toggling the light is a direct action via lightToggle(), not part of this
+    // staged plan, so no switchOn flag is passed here.
     const desired = {
       available: dr.available,
       availableTouched: dr.availableTouched,
@@ -1375,10 +1379,10 @@
     };
     const result = POLICY.planLight(
       {
-        available: cur.available === undefined ? null : cur.available,
-        on: cur.on === undefined ? null : cur.on,
-        config: cur.config === undefined ? null : cur.config,
-        powerW: cur.powerW === undefined ? null : cur.powerW,
+        available: cur.available ?? null,
+        on:        cur.on        ?? null,
+        config:    cur.config    ?? null,
+        powerW:    cur.powerW    ?? null,
       },
       {
         available: desired.available,
@@ -1397,7 +1401,7 @@
     if (op === POLICY.OP.LIGHT_CONFIG.id) return (owner) => W.Writers.lightConfiguration(value, owner);
     if (op === POLICY.OP.LIGHT_SWITCH.id) return (owner) => W.Writers.lightSwitch(value, owner);
     if (op === POLICY.OP.LIGHT_POWER.id) return (owner) => W.Writers.lightPower(value, owner);
-    throw new Error('Blocked operation: ' + op);
+    throw new Error('Unknown light operation: ' + op);
   }
   function lightSteps() {
     return lightPlanResult().steps.map((s) => ({
@@ -1429,7 +1433,8 @@
     }
     if (o === 'km') return { timestamp: 0, odometer: Math.round(odoM + 1500 * 1000) };
     if (o === 'custom') {
-      const ts = draft.service.date ? Math.floor(new Date(draft.service.date + 'T12:00:00').getTime() / 1000) : 0;
+      const rawTs = draft.service.date ? Math.floor(new Date(draft.service.date + 'T12:00:00').getTime() / 1000) : 0;
+      const ts = Number.isFinite(rawTs) ? rawTs : 0;
       const km = parseFloat(String(draft.service.km).replace(',', '.'));
       return { timestamp: ts, odometer: Number.isFinite(km) && km > 0 ? Math.round(odoM + km * 1000) : 0 };
     }
@@ -1453,7 +1458,7 @@
       noresponse: 'The bike never answers a write',
     };
     return `<div class="notice">${ICON.info}<div><strong>Demo mode:</strong> All actions run against a simulated bike. Nothing is sent to a real eBike.</div></div>
-      <div class="form" style="gap:6px"><label style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">Simulated bike behaviour
+      <div class="form form--compact"><label style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">Simulated bike behaviour
         <select class="select" id="demoMode" style="max-width:320px">${modes.map((m) => `<option value="${esc(m)}" ${m === current ? 'selected' : ''}>${esc(labels[m] || m)}</option>`).join('')}</select></label>
         <span class="field__hint">Demo only. The setting applies to the next write.</span></div>`;
   }
@@ -1541,18 +1546,18 @@
             <div class="field__label" style="margin:0 0 6px">Components</div>
             <div class="presets" id="wlComponents">${compChips || '<span class="field__hint">No registry registers.</span>'}</div>
           </div>
-          <label class="form" style="gap:6px"><span class="field__label" style="margin:0">Search a field by name</span>
+          <label class="form form--compact"><span class="field__label" style="margin:0">Search a field by name</span>
             <input class="input" id="wlSearch" type="search" role="combobox" autocomplete="off" placeholder="Search a field by name…" value="${esc(draft.advanced.search)}" aria-controls="wlResults" aria-autocomplete="list" aria-expanded="true" aria-haspopup="listbox"${draft.advanced.cursor >= 0 ? ` aria-activedescendant="wlOpt${draft.advanced.cursor}"` : ''}></label>
           <label class="check"><input type="checkbox" id="wlOnlyRead" ${draft.advanced.onlyRead ? 'checked' : ''}> Only registers already read in this session</label>
-          <div class="form" style="gap:6px">
+          <div class="form form--compact">
             <div class="field__label" style="margin:0">Register</div>
             <div id="wlResults" role="listbox" aria-label="Matching registers" style="display:grid;gap:4px;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:var(--r);padding:4px">${resultsHtml}</div>
             <span class="field__hint">Arrow keys and Enter, or click. ${filtered.length} match${filtered.length === 1 ? '' : 'es'}.</span>
           </div>
           <div class="status-row" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
-            <div class="status-cell" style="min-width:0"><div class="status-cell__k">Selected register</div><div class="status-cell__v mono" style="overflow-wrap:anywhere">${advEntry ? esc(advEntry.component + '.' + advEntry.name) : '–'}</div></div>
-            <div class="status-cell" style="min-width:0"><div class="status-cell__k">Current value</div><div class="status-cell__v mono" style="overflow-wrap:anywhere">${esc(advCurrent)}</div></div>
-            <div class="status-cell" style="min-width:0"><div class="status-cell__k">Registry kind</div><div class="status-cell__v mono">${esc(advEntry ? (advEntry.kind || 'unknown') : '–')}</div></div>
+            <div class="status-cell"><div class="status-cell__k">Selected register</div><div class="status-cell__v mono break-any">${advEntry ? esc(advEntry.component + '.' + advEntry.name) : '–'}</div></div>
+            <div class="status-cell"><div class="status-cell__k">Current value</div><div class="status-cell__v mono break-any">${esc(advCurrent)}</div></div>
+            <div class="status-cell"><div class="status-cell__k">Registry kind</div><div class="status-cell__v mono">${esc(advEntry ? (advEntry.kind || 'unknown') : '–')}</div></div>
           </div>
           ${friendly}
           ${advEntry && entryReadable(advEntry) ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -1565,19 +1570,18 @@
               <input class="input mono" id="wlPayload" placeholder="e.g. 08 01" autocomplete="off" value="${esc(draft.advanced.payload)}" ${canEdit ? '' : 'disabled'}></label>
             <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">
               <span class="field__hint" id="wlPayloadCount">0 / 64 bytes</span>
-              <span class="field__hint">max 64 bytes</span>
             </div>
-            <p class="field__hint" id="wlAnnotate" style="overflow-wrap:anywhere"></p>
+            <p class="field__hint break-any" id="wlAnnotate"></p>
             <p class="field__hint">The raw payload is written and, when readable, re-read.</p>
           </details>
           <details id="wlFrameDetails">
             <summary class="field__label" style="cursor:pointer;display:list-item">Frame that will be sent</summary>
             <div class="status-row" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:8px">
-              <div class="status-cell" style="min-width:0"><div class="status-cell__k">Target</div><div class="status-cell__v mono" id="wlFrameTarget" style="overflow-wrap:anywhere">–</div></div>
-              <div class="status-cell" style="min-width:0"><div class="status-cell__k">Payload</div><div class="status-cell__v mono" id="wlFramePayloadLen">–</div></div>
-              <div class="status-cell" style="min-width:0"><div class="status-cell__k">Frame body</div><div class="status-cell__v mono" id="wlFrameBodyLen">–</div></div>
+              <div class="status-cell"><div class="status-cell__k">Target</div><div class="status-cell__v mono break-any" id="wlFrameTarget">–</div></div>
+              <div class="status-cell"><div class="status-cell__k">Payload</div><div class="status-cell__v mono" id="wlFramePayloadLen">–</div></div>
+              <div class="status-cell"><div class="status-cell__k">Frame body</div><div class="status-cell__v mono" id="wlFrameBodyLen">–</div></div>
             </div>
-            <div class="bytes mono" id="wlFrameHex" style="display:block;margin-top:8px;overflow-wrap:anywhere">–</div>
+            <div class="bytes mono break-any" id="wlFrameHex" style="display:block;margin-top:8px">–</div>
             <p class="field__hint">Sequence 0 placeholder. First two bytes: USB header <span class="mono">30 len</span>; BLE uses a channel-1 segmentation frame.</p>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
               <button class="btn btn--ghost btn--sm" id="wlCopyPayload">Copy payload</button>
@@ -1599,8 +1603,8 @@
     const isBle = S.transportKind === 'ble-mcsp';
 
     el.innerHTML = `${connBanner()}
-      ${isBle ? `<div class="notice notice--warn conn-banner" role="alert">${ICON.warn}<div class="conn-banner__text"><strong>Bluetooth connection — read-only.</strong> Configuration writes are not available over Bluetooth. To make changes, disconnect and reconnect via USB.</div></div>` : ''}
-      ${demoNote ? `<div class="section" style="display:grid;gap:12px">${demoNote}</div>` : ''}
+      ${isBle ? `<div class="notice conn-banner" role="note">${ICON.info}<div class="conn-banner__text"><strong>Bluetooth (MCSP) connection.</strong> Writes use the same verified path as USB with extended read-back timing. Latency is higher than USB — allow extra time for each confirmation.</div></div>` : ''}
+      ${demoNote}
       ${authNotice}
       ${pendingPanel()}
       <div class="section writer">
@@ -1613,10 +1617,10 @@
           </summary>
           <div class="wcard__body">
             <div class="status-row" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
-              <div class="status-cell" style="min-width:0"><div class="status-cell__k">Light output</div><div class="status-cell__v">${d.light.available === null ? 'unknown' : d.light.available ? `<span style="color:var(--ok)">${ICON.check}</span>enabled` : 'disabled'}</div></div>
-              <div class="status-cell" style="min-width:0"><div class="status-cell__k">Light</div><div class="status-cell__v">${d.light.on == null ? 'unknown' : d.light.on ? `<span style="color:var(--beam-ink)">${ICON.check}</span>on` : 'off'}</div></div>
-              <div class="status-cell" style="min-width:0"><div class="status-cell__k">Light power</div><div class="status-cell__v mono" style="overflow-wrap:anywhere">${fmtW(d.light.powerW)}</div></div>
-              <div class="status-cell" style="min-width:0"><div class="status-cell__k">Startup mode</div><div class="status-cell__v mono" style="overflow-wrap:anywhere">${esc(lightConfigLabel(d.light.config))}</div></div>
+              <div class="status-cell"><div class="status-cell__k">Light output</div><div class="status-cell__v">${d.light.available === null ? 'unknown' : d.light.available ? `<span style="color:var(--ok)">${ICON.check}</span>enabled` : 'disabled'}</div></div>
+              <div class="status-cell"><div class="status-cell__k">Light</div><div class="status-cell__v">${d.light.on == null ? 'unknown' : d.light.on ? `<span style="color:var(--beam-ink)">${ICON.check}</span>on` : 'off'}</div></div>
+              <div class="status-cell"><div class="status-cell__k">Light power</div><div class="status-cell__v mono break-any">${fmtW(d.light.powerW)}</div></div>
+              <div class="status-cell"><div class="status-cell__k">Startup mode</div><div class="status-cell__v mono break-any">${esc(lightConfigLabel(d.light.config))}</div></div>
             </div>
 
             ${d.light.available === null ? `<div class="notice notice--warn">${ICON.warn}<div><strong>Light output state could not be read.</strong> Availability and startup-mode writes cannot be validated on this bike, so none will be offered.</div></div>` : ''}
@@ -1636,7 +1640,9 @@
                 ? `<button class="btn btn--ghost btn--sm" data-act="lightRefresh" ${(W.isLive || S.demo) ? '' : 'disabled'}>Refresh light state</button>`
                 : d.light.available === true
                   ? `<button class="btn btn--primary btn--sm" data-act="lightToggle" ${canEdit && !lightActionBusy ? '' : 'disabled'}>Toggle light</button>`
-                  : `<span class="field__hint">Enable light output above to use the switch.</span>`}
+                  : d.light.available === false
+                    ? `<span class="field__hint">Enable light output above to use the switch.</span>`
+                    : `<span class="field__hint">Light availability could not be read — refresh first.</span>`}
             </div>
 
             <details ${dr.available ? 'open' : 'hidden'}>
@@ -1653,7 +1659,7 @@
                     ? 'The current light power could not be read on this bike, so a power write is not offered.'
                     : 'Known issue (observed not working): writing <span class="mono">0x1822</span> does not change lamp output on tested bikes. Nothing is retried or rolled back. Never set more than your lamps are rated for.'}</p>
                 </div>
-                <label class="form" style="gap:6px"><span class="field__label" style="margin:0">Light startup mode (0x1821)</span>
+                <label class="form form--compact"><span class="field__label" style="margin:0">Light startup mode (0x1821)</span>
                   <select class="select" id="lConfig" ${canEdit ? '' : 'disabled'}>
                     <option value="" ${dr.configTouched ? '' : 'selected'}>— choose a mode (leave unchanged) —</option>
                     ${[1, 2, 3].map((v) => `<option value="${v}" ${dr.configTouched && dr.config === v ? 'selected' : ''}>${v === 2 ? '2 – On power-up: remember last light state (documented)' : `${v} – Experimental / meaning not documented`}</option>`).join('')}
@@ -1672,7 +1678,7 @@
           </div>
           <footer class="wcard__foot">
             <span class="spacer"></span>
-            <button class="btn ${dr.available || !d.light.available ? 'btn--beam' : 'btn--danger'}" data-act="lightApply" ${canEdit && steps.length && !planRes.error ? '' : 'disabled'}>${dr.available ? (d.light.available ? 'Write changes' : 'Enable light') : d.light.available ? 'Disable light' : 'Nothing to write'}</button>
+            <button class="btn ${dr.available || d.light.available !== true ? 'btn--beam' : 'btn--danger'}" data-act="lightApply" ${canEdit && steps.length && !planRes.error ? '' : 'disabled'}>${dr.available ? (d.light.available === true ? 'Write changes' : 'Enable light') : d.light.available === true ? 'Disable light' : d.light.available === false ? 'Nothing to write' : 'Write changes'}</button>
           </footer>
         </details>
 
@@ -1704,7 +1710,7 @@
             <p class="field__hint">Presets are selection aids, not maintenance intervals.</p>
           </div>
           <footer class="wcard__foot"><span class="spacer"></span>
-            <span class="field__hint" id="svcReasons">${serviceReasons(tgt).length ? 'Next: ' + esc(serviceReasons(tgt).join(' → ')) : 'All conditions met.'}</span>
+            ${(function() { const sr = serviceReasons(tgt); return `<span class="field__hint" id="svcReasons">${sr.length ? 'Next: ' + esc(sr.join(' → ')) : 'All conditions met.'}</span>`; })()}
             <button class="btn ${so === 'delete' ? 'btn--danger' : 'btn--primary'}" data-act="svcApply" ${canEdit && serviceValid(tgt) ? '' : 'disabled'}>${so === 'delete' ? 'Clear interval' : 'Write interval'}</button>
           </footer>
         </details>
@@ -1843,7 +1849,7 @@
         draft.advanced.components = (active.size === 1 && active.has(c)) ? null : [c];
         draft.advanced.target = '';
         draft.advanced.payload = '';
-            draft.advanced.cursor = -1;
+        draft.advanced.cursor = -1;
         renderWrite();
       };
     });
@@ -1888,7 +1894,7 @@
       renderWrite();
     };
     const wlUseCurrent = $('wlUseCurrent');
-    if (wlUseCurrent) wlUseCurrent.onclick = () => useCurrentWriteLabValue();
+    if (wlUseCurrent) wlUseCurrent.onclick = useCurrentWriteLabValue;
     const wlCopyPayload = $('wlCopyPayload');
     if (wlCopyPayload) wlCopyPayload.onclick = () => copyToClipboard(draft.advanced.payload, 'Payload');
     const wlCopyFrame = $('wlCopyFrame');
@@ -1934,7 +1940,11 @@
       await modal({ title: 'Cannot write', body: `<p>${esc(planRes.error)}</p>`, actions: [{ label: 'OK', value: true, cls: 'btn--primary' }] });
       return;
     }
-    const steps = lightSteps();
+    let steps;
+    try { steps = lightSteps(); } catch (err) {
+      await modal({ title: 'Cannot stage', body: `<p>${esc(err.message || String(err))}</p>`, actions: [{ label: 'OK', value: true, cls: 'btn--primary' }] });
+      return;
+    }
     if (!steps.length) return;
     if (!requireAuthorized()) return;
     stageSteps('light', steps);
@@ -2056,11 +2066,12 @@
   // staged as a registry-bound GENERIC_WRITE step, which keeps the one-shot
   // grant, the single write and the read-back. The two port registers are
   // normal-tier, so there is no typed-name gate.
-  // Human-readable label for a port register payload. 08 01 = on, 08 00 or
-  // empty = off. Used in both the Overview and the Configuration card.
+  // Human-readable label for a port register payload. 08 01 = on,
+  // 08 00 = off (empty read-backs also treated as off: proto3 implicit zero).
+  // Used in both the Overview and the Configuration card.
   function portPayloadLabel(hex) {
-    if (hex === '08 01') return 'on';
-    if (!hex || hex === '08 00') return 'off';
+    if (hex === PORT_PAYLOAD.enable) return 'on';
+    if (!hex || hex === PORT_PAYLOAD.disable) return 'off';
     return hex;
   }
   function portCurrent(t) {
@@ -2075,7 +2086,12 @@
       const choice = draft.ports[t.key];
       if (choice === 'unchanged') return false;
       const cur = V(t.component + '.' + t.name);
-      return !(cur && cur.status === 'ok' && (cur.hex || '') === PORT_PAYLOAD[choice]);
+      if (!cur || cur.status !== 'ok') return true;
+      // Treat empty payload as semantically equivalent to explicit-false ('08 00'):
+      // both represent "off". Without this normalisation a register that reads back
+      // as empty (proto3 implicit zero) would stage a redundant disable write.
+      const curNorm = cur.hex || PORT_PAYLOAD.disable;  // empty → treat as '08 00'
+      return curNorm !== PORT_PAYLOAD[choice];
     });
   }
   function portReasons() {
@@ -2258,7 +2274,10 @@
       let steps;
       if (on) {
         // Turning ON: a direct BIKE_LIGHT write works on all firmware.
-        const plan = POLICY.planLightSwitch(false); // planLightSwitch(currentOn=false) → turn on
+        // planLightSwitch provides the step metadata (label, bytes, op,
+        // component, name, address, value); the run is overridden to use the
+        // engine writer directly.
+        const plan = POLICY.planLightSwitch(false); // currentOn=false → produces turn-on step
         steps = [{ ...plan.steps[0], run: (owner) => W.Writers.lightSwitch(true, owner) }];
       } else {
         // Turning OFF: some BRC3100 firmware versions silently ignore
@@ -2279,7 +2298,10 @@
             label: 'Keep light port installed', bytes: '08 01',
             op: 'LIGHT_AVAILABLE', component: 'DriveUnit', name: 'BIKE_LIGHT_AVAILABLE',
             address: availAddr, value: true,
-            continueOnFailure: true,
+            // This is the last step; continueOnFailure has no effect here
+            // (there is no following step to continue to). Both step results
+            // are always collected and shown in the modal regardless of this
+            // flag because results.push(r) runs before the break check.
             run: (owner) => W.Writers.lightAvailable(true, owner),
           },
         ];
@@ -2299,7 +2321,7 @@
   function typedBatchPrompt(items) {
     return new Promise((resolve) => {
       const body = `<p>Type each full register name exactly to confirm this batch. The names are checked again at the writer boundary.</p>
-        ${items.map((p, i) => `<label class="form" style="gap:6px"><span class="field__label mono">${esc(p.key)}</span>
+        ${items.map((p, i) => `<label class="form form--compact"><span class="field__label mono">${esc(p.key)}</span>
           <input class="input mono" id="batchTyped${i}" autocomplete="off" spellcheck="false" placeholder="${esc(p.key)}"></label>`).join('')}`;
       modal({
         title: 'Confirm high-impact registers',
@@ -2529,8 +2551,9 @@
     const box = $('pdfPreview'); if (!box) return;
     try {
       const doc = buildPdf();
+      const nextUrl = URL.createObjectURL(doc.output('blob'));
       if (reportUrl) URL.revokeObjectURL(reportUrl);
-      reportUrl = URL.createObjectURL(doc.output('blob'));
+      reportUrl = nextUrl;
       box.innerHTML = `<iframe title="Diagnostic report preview" src="${reportUrl}#view=FitH"></iframe>`;
     } catch (err) {
       console.error(err);
@@ -2697,7 +2720,7 @@
 
   W.on('change', render);
   W.on('progress', ({ done, total, label }) => {
-    const pct = Math.min(100, (done / total) * 100);
+    const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
     $('progressBar').style.width = `${pct}%`;
     $('progress').setAttribute('aria-valuenow', String(Math.round(pct)));
     const l = $('readingLabel'); if (l) l.textContent = label === 'complete' ? 'Complete' : `Reading ${label.replace(/_/g, ' ').toLowerCase()} …`;
@@ -2874,32 +2897,31 @@
   // The three real transports. Reconnect never invents another mode and never
   // falls back silently: an unavailable mode is shown with the reason.
   function reconnectModes() {
-    const hasUsb = apiAvail().hasUsb;
-    const hasBt  = apiAvail().hasBt;
+    const { hasUsb, hasBt, secure } = apiAvail();
+    const bleReason = (module) => !hasBt
+      ? (secure ? 'Web Bluetooth is not available in this browser or is restricted by a policy.'
+                : 'Web Bluetooth requires a secure context (HTTPS). This page was loaded over an insecure origin.')
+      : !module ? 'The transport module is not loaded.' : '';
     return [
       {
         id: 'usb', label: 'USB', available: hasUsb,
-        reason: hasUsb ? '' : (apiAvail().secure
+        reason: hasUsb ? '' : (secure
           ? 'WebUSB is not available in this browser or is restricted by a policy.'
           : 'WebUSB requires a secure context (HTTPS). This page was loaded over an insecure origin.'),
       },
       {
         id: 'ble-mcsp', label: 'Bluetooth (MCSP)',
         available: hasBt && !!(window.Bes3BleMcsp && window.Bes3BleMcsp.requestMcspDevice),
-        reason: !hasBt
-          ? (apiAvail().secure
-              ? 'Web Bluetooth is not available in this browser or is restricted by a policy.'
-              : 'Web Bluetooth requires a secure context (HTTPS). This page was loaded over an insecure origin.')
-          : 'The MCSP transport module is not loaded.',
+        reason: !hasBt ? bleReason(false)
+          : !(window.Bes3BleMcsp && window.Bes3BleMcsp.requestMcspDevice)
+            ? 'The MCSP transport module is not loaded.' : '',
       },
       {
         id: 'ble-live', label: 'Bluetooth (Live Data, read-only)',
         available: hasBt && !!(window.Bes3LiveDataBle && window.Bes3LiveDataBle.requestLiveDataDevice),
-        reason: !hasBt
-          ? (apiAvail().secure
-              ? 'Web Bluetooth is not available in this browser or is restricted by a policy.'
-              : 'Web Bluetooth requires a secure context (HTTPS). This page was loaded over an insecure origin.')
-          : 'The Live Data transport module is not loaded.',
+        reason: !hasBt ? bleReason(false)
+          : !(window.Bes3LiveDataBle && window.Bes3LiveDataBle.requestLiveDataDevice)
+            ? 'The Live Data transport module is not loaded.' : '',
       },
     ];
   }
@@ -2914,7 +2936,7 @@
       : (firstAvailable ? firstAvailable.id : '');
     const rows = modes.map((m) => {
       const bleNote = m.id === 'ble-mcsp' && m.available
-        ? `<div class="opt__d" style="margin-top:4px">Read-only — Configuration writes are not available over Bluetooth. Pair the eBike in OS Bluetooth settings first for best results.</div>`
+        ? `<div class="opt__d" style="margin-top:4px">Writes verified by independent read-back (higher latency than USB). Pair the eBike in OS Bluetooth settings first for best results.</div>`
         : '';
       return `<label class="opt" style="cursor:${m.available ? 'pointer' : 'not-allowed'};${m.available ? '' : 'opacity:.55'}">
         <input type="radio" name="reconnect-mode" value="${esc(m.id)}" ${m.id === selected ? 'checked' : ''} ${m.available ? '' : 'disabled'}>
@@ -2966,7 +2988,11 @@
 
   async function promptReconnect() {
     if (connectAttemptInProgress) return;
-    const mode = await reconnectModeDialog();
+    // Hold the guard during the dialog so a concurrent Connect button click
+    // cannot start its own session while the user is picking a mode.
+    connectAttemptInProgress = true;
+    let mode;
+    try { mode = await reconnectModeDialog(); } finally { connectAttemptInProgress = false; }
     if (!mode) return;
     await doConnect(true, mode);
   }
@@ -3086,7 +3112,7 @@
   $('btnConnect').onclick = () => doConnect(false, 'usb');
   const btnBle = $('btnConnectBle'); if (btnBle) btnBle.onclick = () => doConnect(false, 'ble-mcsp');
   const btnBleLive = $('btnConnectBleLive'); if (btnBleLive) btnBleLive.onclick = () => doConnect(false, 'ble-live');
-  const trBtn = $('btnTopReconnect'); if (trBtn) trBtn.onclick = () => promptReconnect();
+  const trBtn = $('btnTopReconnect'); if (trBtn) trBtn.onclick = promptReconnect;
   $('btnDemo').onclick = async () => { if (!(await ensureRiskAccepted())) return; if (!(await demoNotice())) return; onSessionChange(); tab = 'read'; await W.startDemo(); toast('Demo eBike read'); };
   $('btnReread').onclick = async () => {
     if (S.mode === 'reading' || S.mode === 'connecting' || W.busy) return;
