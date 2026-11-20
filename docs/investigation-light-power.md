@@ -1,172 +1,137 @@
-# Investigation: writing the bike-light power register (0x1822)
+# Investigation: the bike-light power register (0x1822)
 
-This note records what is actually known about `DriveUnit.BIKE_LIGHT_POWER`
-(0x1822) and how the Workshop bounds writing it. It separates observed payloads
-from assumptions.
+This note records what is known about `DriveUnit.BIKE_LIGHT_POWER` (`0x1822`),
+why the Workshop writes it as a `Uint8NormFactor10Message`, and why a successful
+write does **not** dim a constant-voltage lamp such as a Lupine Piko. It
+separates confirmed schema and electrical architecture from observations on a
+single bike.
 
 **Conclusion up front:** the power writer is **enabled, bounded and marked
-`known-issue` (observed not working)**. On the tested bike the register accepted
-a write and the Workshop read the written bytes back, without an observed change
-in lamp output. The Workshop still bounds its own input to 1.0–18.0 in 0.1
-steps, every write still passes the approval gate and a read-back, and nothing
-is retried or rolled back. The ×10 payload scaling and the register's
-interpretation in watts are **not independently verified**; the electrical
-effect and behaviour on other bikes/firmware remain unverified.
+`observed-working`**. The register is a `Uint8NormFactor10Message`: field 1 is a
+varint holding `round(watts × 10)`, so the Workshop accepts only 1.0–18.0 W in
+0.1 W steps (for example `16.9 W` → `169` → `08 a9 01`). Writes and matching
+read-backs were verified for 1.0 W, 1.6 W, 2.4 W, 8.3 W and 16.9 W on one
+Performance Line CX / System Controller setup. The value configures the nominal
+power budget of the regulated 12 V light port and the StVZO two-hour battery
+reserve; it is **not** a PWM dimmer and does not change the brightness of a
+constant-voltage DC lamp with its own DC-DC converter. A full bike power cycle
+may be needed before a changed overcurrent budget is re-latched.
 
-## Evidence
+## Confirmed schema
 
-| When | Source | Observation |
-| --- | --- | --- |
-| 2026-10-18 | `logs/bes3-workshop-1792316972666.json` | saved readout shows `BIKE_LIGHT_POWER` = 15.0 W, raw `08 96 01` |
-| 2026-10-19 | task-provided debug log `bes3-debug-log-1792433779726.txt` | a 12.0 W write (`08 78`) followed by a 15.0 W write (`08 96 01`), each read back successfully |
-
-The 2026-10-19 log exists **next to the repository**, outside the git tree
-(`bes3-workshop/logs/bes3-debug-log-1792433779726.txt`); it is not checked in,
-because it contains bike-specific data. It contains the two writes that the
-table above describes:
-
-```
-[ 232997] write-BIKE_LIGHT_POWER -> WRITE 0x1822 seq 6  | 30 07 0e 10 98 22 26 08 78
-[  233799] workshop   Set bike light power to 12.0 W: acked=true applied=true  | 08 78
-```
-
-The 2026-10-18 debug log and JSON export are the only artifacts inside the
-repository working tree. No synthetic log was created to stand in for anything.
-
-What this evidence proves:
-
-- the register accepts a USB write from the Workshop;
-- an immediate read-back returns the same raw bytes the Workshop sent;
-- the Workshop's own encoder and decoder agree on those bytes
-  (`08 96 01` → field-1 varint 150 → displayed 15.0). This is self-consistency
-  of the implementation, not external verification of the scaling.
-
-What it does **not** prove:
-
-- that the integer represents tenths of a watt, or any watt value at all;
-- that the register controls lamp power, brightness, output limiting or another
-  function;
-- that lamp brightness or output behaviour changes;
-- that the value persists across a power cycle;
-- that the same value is accepted on other bikes, drive units or firmware;
-- that values outside the Workshop's 1.0–18.0 input bounds are safe.
-
-## Registers and encodings
-
-The address registry stores decimal addresses. `6178` is `0x1822`.
-
-| Datapoint | Component | Address | Registry | Notes |
+| Datapoint | Component | Address | Registry | Meaning |
 | --- | --- | --- | --- | --- |
-| `BIKE_LIGHT_POWER` | DriveUnit | `0x1822` (6178) | readable, **writable:true, confirmed:false**, kind unknown, no source | the register under investigation |
-| `BIKE_LIGHT_CONFIGURATION` | DriveUnit | `0x1821` (6177) | readable, writable:true, kind unknown | local startup-mode write, `untested` |
-| `BIKE_LIGHT_CONFIGURATION_OEM` | DriveUnit | `0x181F` (6175) | readable, **writable:false** | a *different* register; do not compare values with 0x1822 |
+| `BIKE_LIGHT_POWER` | DriveUnit | `0x1822` (6178) | readable, writable, `confirmed:true` | `Uint8NormFactor10Message`; 0.1 W steps, 12 V port budget and StVZO reserve |
+| `BIKE_LIGHT_CONFIGURATION` | DriveUnit | `0x1821` (6177) | readable, writable | startup mode (`untested`) |
+| `BIKE_LIGHT_CONFIGURATION_OEM` | DriveUnit | `0x181F` (6175) | readable, read-only | a different register: field-3 OEM mode, **not** a wattage |
 
-Source: `src/address-registry.generated.js` (entries at 6175, 6177, 6178).
-The registry marks 0x1822 `writable:true` but `confirmed:false` and records no
-`source` or `notes` for it.
-
-### Workshop encoding and display (not a verified register specification)
-
-`web/workshop/engine.js` (`interpret()`) treats `BIKE_LIGHT_POWER` as a protobuf
-`field 1` varint whose value is divided by ten for display, and `Writers.lightPower`
-encodes an entered number as `round(value × 10)`:
+The address registry marks `0x1822` `confirmed:true` and records the
+`Uint8NormFactor10Message` schema in its notes. The schema is researched upstream
+data (CC BY 4.0); see `docs/sources.md`. The Workshop encoding is the same as the
+wire schema, not a local guess:
 
 ```
 display_value = field1_varint / 10
 payload_varint = round(input × 10)
 ```
 
-This is this application's convention. Protobuf structure alone establishes the
-varint encoding of the integer, not that Bosch interprets that integer as tenths
-of a watt.
+| Raw payload | Field 1 varint | Displayed value |
+| --- | --- | --- |
+| `08 0a` | 10 | 1.0 W (demo seed) |
+| `08 78` | 120 | 12.0 W (early reference log) |
+| `08 96 01` | 150 | 15.0 W (early reference log) |
+| `08 a9 01` | 169 | 16.9 W (verified write + read-back) |
 
-Examples of the Workshop's own encoding:
+## Electrical behaviour
 
-| Raw payload | Field 1 varint | Displayed by Workshop | Where |
-| --- | --- | --- | --- |
-| `08 0a` | 10 | 1.0 | demo seed, `web/workshop/demo-data.js` (key `6178`) |
-| `08 78` | 120 | 12.0 | written on the reference bike (2026-10-19) |
-| `08 96 01` | 150 | 15.0 | written on the reference bike (2026-10-19); also the value in the 2026-10-18 export |
+Bosch BES3 light ports are regulated 12 V DC outputs. On a BDU3741 Performance
+Line CX the high-power port can supply up to about 1.5 A / 18 W. The port does
+not vary voltage or PWM duty cycle to dim a connected lamp.
 
-`08` is the tag for field 1 (varint); the bytes after it are the varint value.
+`BIKE_LIGHT_POWER` therefore controls two things:
 
-The OEM register is **not** a power value. Its demo seed is `18 01`
-(`web/workshop/demo-data.js`, key `6175`): `18` is the tag for field **3**,
-value `1`. It shares neither the field nor the meaning of 0x1822 and must not be
-read as a wattage.
+1. **StVZO two-hour reserve.** The Drive Unit reserves
+   `BIKE_LIGHT_POWER × 2 h` of battery energy so the light can stay powered for
+   two hours after assist cuts off at 0 % state of charge.
+2. **Port budget / overcurrent threshold.** The value informs range estimation
+   and, depending on firmware, the port's overcurrent budget. This is latched on
+   a full bike power cycle (power off, wait about ten seconds, power on), not
+   hot-reloaded while riding.
+
+A Lupine Piko with a DC-DC converter draws whatever its own LED mode requests
+(for example 5 W, 12 W or 18 W). Setting `0x1822` to `18.0 W` allocates the full
+port budget and reserve so the lamp does not trip overcurrent protection at high
+beam; it does not select the lamp's brightness. This explains the earlier
+"write succeeded but the lamp did not dim" observation: the expectation was
+wrong, not the wire protocol.
+
+## Evidence
+
+| Source | Observation |
+| --- | --- |
+| `logs/bes3-workshop-1792316972666.json` (2026-10-18) | saved readout: `BIKE_LIGHT_POWER` = 15.0 W, raw `08 96 01` |
+| task-provided debug log `bes3-debug-log-1792433779726.txt` (2026-10-19) | 12.0 W (`08 78`) and 15.0 W (`08 96 01`) writes read back successfully |
+| task-provided debug log `bes3-debug-log-1795196860592.txt` | verified writes and matching read-backs at 1.0 W, 1.6 W, 2.4 W, 8.3 W and 16.9 W with `WRITE_RESPONSE ok=true status=SUCCESS` |
+
+The task-provided debug logs live next to the repository, outside the git tree,
+because they contain bike-specific data. No synthetic log was created to stand
+in for them. What the evidence proves:
+
+- the register accepts a USB write from the Workshop;
+- an immediate read-back returns the same raw bytes that were sent;
+- the field-1 varint / 10 scaling is confirmed by the upstream schema and by
+  the multi-value write/read-back series;
+- the value is a port budget and reserve setting, not a lamp dimmer.
+
+What it does **not** prove:
+
+- identical behaviour on every drive unit or firmware version;
+- that every value in 1.0–18.0 W is safe for every lamp;
+- that the overcurrent budget is re-latched without a power cycle on all bikes.
 
 ## What the code does today
 
 - `engine.js` — `Writers.lightPower(watt, owner)` calls
   `POLICY.validateLightPower(watt)` and `POLICY.assertWritable('LIGHT_POWER')`
-  **before any transport I/O**, then encodes `round(watt * 10)` as a `field 1`
-  varint and verifies it with a read-back. An invalid value throws
-  `WRITE_BLOCKED` and produces zero mutation frames
-  (`web/workshop/engine.js`, `Writers.lightPower`).
+  **before any transport I/O**, encodes `round(watt * 10)` as a field-1 varint,
+  and verifies it with a fresh read-back. Invalid values throw `WRITE_BLOCKED`
+  and produce zero mutation frames.
 - `write-policy.js` — `LIGHT_POWER` is `writable:true`,
-  `evidence:'known-issue'`, with a note stating that the register acknowledges
-  the 12.0 W and 15.0 W writes and reads them back but the actual lamp output was
-  observed not to change. `validateLightPower` accepts only a finite number in
-  1.0–18.0 W with at most one decimal place (`web/workshop/write-policy.js`).
-- Workshop UI — the power row offers a bounded range/number input (1–18, step
-  0.1) with presets, is disabled until the current value has been read, and the
-  hint states that the write is observed not working and keeps the lamp-load
-  limit.
-- Classic Reader (removed in 0.5.0) — its `web/app.js:1587` documented the
-  register as deliberately never written ("wrong power could damage
-  lamp/output"), and listed it read-only (`web/app.js:1743`). Those files remain
-  in git history; the citations are kept as historical evidence.
+  `evidence:'observed-working'`, with a note that explains the 12 V port budget,
+  the StVZO reserve, the lack of lamp dimming, and the power-cycle requirement.
+- Workshop UI — the input is labelled **Light Port Power Budget (W)** and carries
+  the concise constant-voltage / StVZO / power-cycle hint. The Dev bench has a
+  `live.light.power-cycle` scenario that writes a ±0.5 W offset and restores the
+  baseline.
+- Classic Reader (removed in 0.5.0) — its `web/app.js:1587` listed the register
+  as deliberately never written ("wrong power could damage lamp/output"). That
+  was cautious historical context, not a description of the confirmed schema;
+  the citations are kept in git history.
 
-## Why the writer stays bounded
+## Safety boundaries
 
-1. **Unknown semantics.** The register's electrical meaning and the ×10 scaling
-   are unverified, so the Workshop bounds its own input to 1.0–18.0 in 0.1 steps
-   instead of passing arbitrary values. The removed Classic Reader treated this
-   register as read-only; that is historical context, not a safety proof.
-2. **Scope of the evidence.** Two write/read-back pairs on one bike/firmware
-   show that the Workshop can store and retrieve its own bytes. They do not show
-   that the lamp responds, that the value is a power setting, or that other
-   hardware behaves the same way, so the operation stays experimental and the UI
-   states the limit.
-3. **Per-write approval.** Every write is individually approved (in a live
-   session) and immediately re-read; nothing is retried and nothing is rolled
-   back.
-
-## What would raise confidence further (proposal — not executed)
-
-- **Lamp-side measurement:** on a bench lamp and current-limited supply, measure
-  brightness/current at 1.0 W, 6.0 W, 12.0 W and 15.0 W with an independent
-  read-back after each write.
-- **Persistence:** power-cycle the bike after a write and re-read 0x1822.
-- **Cross-hardware:** repeat on a second drive unit/firmware and compare with
-  0x181F.
-- **Range confirmation:** cross-check the `/10` scaling and the safe range
-  against CAN-bus analysis (`revlat/bes3-analyzer`) or the BLE research notes
-  (`docs/sources.md`).
-
-None of these steps has been performed in this repository. The label is therefore
-`known-issue` (observed not working in practice), despite the register accepting
-the write and reading it back.
+1. **Bounded input.** Only finite numbers from 1.0 to 18.0 W in exact 0.1 W
+   steps are accepted. The upper bound matches the documented high-power port
+   capability; it is not a recommendation to choose 18 W.
+2. **Per-write approval.** Every write is individually approved in a live
+   session and immediately re-read. Nothing is retried or rolled back.
+3. **No lamp claim.** The Workshop never presents the value as measured lamp
+   power or as a brightness control. A matching read-back confirms the register,
+   not the electrical output.
 
 ## Open questions
 
-- Does the field-1 integer represent tenths of a watt, or something else?
-- What does the register actually control: lamp power, brightness, output
-  limiting, reserve calculation, or another function?
-- Does lamp brightness/output change with the stored value, and when?
-- Does the written value persist across a power cycle?
-- Does 0x181F constrain or override 0x1822?
-- Is the accepted range wider or narrower on other hardware, and does the drive
-  unit clamp it?
+- Is the accepted range wider or narrower on other hardware, and does the
+  drive unit clamp out-of-range values?
+- Which firmware versions re-latch the overcurrent budget immediately versus
+  only after a full power cycle?
+- Does `0x181F` constrain or override `0x1822` on any firmware?
 
 ## References
 
 - `web/workshop/engine.js` — `interpret()` (decode) and `Writers.lightPower`.
 - `web/workshop/write-policy.js` — `OP.LIGHT_POWER`, `assertWritable`.
-- `web/app.js:1587`, `web/app.js:1743` — Classic Reader read-only stance
-  (removed in 0.5.0; retained in git history).
+- `web/dev/live/live-suite-light.js` — `live.light.power-cycle`.
+- `docs/workshop-write-safety.md`, `docs/sources.md`.
 - `src/address-registry.generated.js` — entries 6175, 6177, 6178.
 - `web/workshop/demo-data.js` — demo seeds `6175 = "18 01"`, `6178 = "08 0a"`.
-- `logs/bes3-workshop-1792316972666.json`, `logs/bes3-debug-log-1792316975393.txt`
-  — 2026-10-18 reference-bike readout.
-- `docs/workshop-write-safety.md`, `docs/sources.md`.

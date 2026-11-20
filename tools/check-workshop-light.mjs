@@ -33,11 +33,45 @@ const REGISTRY = require(path.join(repo, 'src', 'address-registry.generated.js')
 
 let passed = 0;
 let failed = 0;
+let skipped = 0;
 const failures = [];
+const skipReasons = [];
+
+// A private checkout contains the Dev workbench; the public release tree
+// excludes it. Private checks are explicitly skipped in a public tree, never
+// counted as successful execution. In a private checkout a missing required
+// file is a hard failure, not a skip.
+const PRIVATE_TREE = existsSync(path.join(repo, 'dev.html'))
+  || existsSync(path.join(repo, 'web', 'dev', 'dev-runner.js'));
+
+class SkipError extends Error {
+  constructor(reason) { super(reason); this._skip = reason; }
+}
+
+function skip(name, reason) {
+  skipped++;
+  skipReasons.push({ name, reason });
+  console.log('  skip ' + name + '  -> ' + reason);
+}
+
+function requirePrivate(files) {
+  if (!PRIVATE_TREE) {
+    throw new SkipError('private Dev workbench is absent from the public tree');
+  }
+  for (const f of files) {
+    if (!existsSync(path.join(repo, f))) {
+      throw new Error('private checkout is missing a required Dev file: ' + f);
+    }
+  }
+}
 
 const TEST_TIMEOUT_MS = 30000;
 
 function finish(name, started, err, timed) {
+  if (err && err._skip) {
+    skip(name, err._skip);
+    return;
+  }
   if (!err) {
     passed++;
     console.log('  ok   ' + name + (timed ? '  (' + (Date.now() - started) + ' ms)' : ''));
@@ -729,13 +763,14 @@ check('all OP entries have complete experimental and evidence metadata', () => {
     assert(d.experimental === true && !!d.evidenceLabel && !!d.evidenceNote, id + ': describeOp metadata complete');
     eq(d.writable, op.writable === true, id + ': writable preserved');
   }
-  for (const id of ['LIGHT_SWITCH', 'LIGHT_AVAILABLE', 'SERVICE_DUE']) eq(POLICY.OP[id].evidence, 'observed-working', id);
+  for (const id of ['LIGHT_SWITCH', 'LIGHT_AVAILABLE', 'SERVICE_DUE', 'LIGHT_POWER']) eq(POLICY.OP[id].evidence, 'observed-working', id);
   for (const id of ['LIGHT_CONFIG', 'BIKE_ID']) eq(POLICY.OP[id].evidence, 'untested', id);
-  eq(POLICY.OP.LIGHT_POWER.evidence, 'known-issue', 'LIGHT_POWER evidence');
   eq(POLICY.OP.CLEAR_ISSUES.evidence, 'unavailable-live', 'CLEAR_ISSUES evidence');
-  assert(/Observed not working/i.test(POLICY.OP.LIGHT_POWER.evidenceNote), 'power note states that it is observed not working');
-  assert(/08 78/.test(POLICY.OP.LIGHT_POWER.evidenceNote) && /08 96 01/.test(POLICY.OP.LIGHT_POWER.evidenceNote), 'power note cites the tested payloads');
-  assert(/lamp effect/.test(POLICY.OP.LIGHT_POWER.evidenceNote), 'power note keeps the lamp-effect limit');
+  assert(/Uint8NormFactor10Message/.test(POLICY.OP.LIGHT_POWER.evidenceNote), 'power note names the confirmed schema');
+  assert(/12 V light-port power budget/.test(POLICY.OP.LIGHT_POWER.evidenceNote), 'power note explains the port budget');
+  assert(/StVZO battery reserve/.test(POLICY.OP.LIGHT_POWER.evidenceNote), 'power note explains the StVZO reserve');
+  assert(/does NOT dim constant-voltage DC lamps/.test(POLICY.OP.LIGHT_POWER.evidenceNote), 'power note rules out lamp dimming');
+  assert(/Power-cycle the bike/.test(POLICY.OP.LIGHT_POWER.evidenceNote), 'power note states the power-cycle requirement');
   assert(/not verified on other bikes or firmware/.test(POLICY.OP.LIGHT_SWITCH.evidenceNote), 'observed note states the limit');
   eq(POLICY.describeOp('NOPE'), null, 'unknown op returns null');
 });
@@ -963,15 +998,15 @@ check('source: light power is an optional step in the light write plan (source c
   assert(ui.includes('POLICY.OP.LIGHT_POWER.id'), 'the light-power op runs through the plan');
 });
 
-// 39. Source-level check: the light-power approval box states the observed
-// evidence (12.0 W / 15.0 W), keeps the lamp-effect limit, and states that
-// nothing is retried or rolled back.
-check('source: light power card states that power is observed not working and no retry/rollback (source check)', () => {
+// 39. Source-level check: the light-power card describes 0x1822 as a
+// configuration value, not measured lamp power, and does not present the input
+// range or its upper bound as a compatibility guarantee or a recommendation.
+check('source: light power card states configuration-value limits (source check)', () => {
   const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
-  assert(/Known issue \(observed not working\)/.test(ui), 'states that light power is observed not working');
-  assert(/Nothing is retried or rolled back/.test(ui), 'states no retry/rollback');
-  assert(/Never set more than your lamps are rated for/.test(ui), 'keeps the lamp load limit');
-  assert(!/changed the stored power budget on the reference bike/.test(ui), 'the old observed-working wording is gone from the UI');
+  assert(/This is a configuration value, not measured lamp power/.test(ui), 'states that the value is configuration, not measured output');
+  assert(/A matching read-back does not establish electrical output or persistence/.test(ui), 'states the read-back limit');
+  assert(/Do not choose 18 W just because it is the upper bound/.test(ui), 'warns against treating 18 W as a recommendation');
+  assert(!/Known issue \(observed not working\)/.test(ui), 'the old observed-not-working claim is gone from the UI');
 });
 
 // 40. Source-level check: the Write Lab no longer has a typed WRITE arming
@@ -1349,7 +1384,7 @@ check('lint: write-path invariants are pinned (source check)', () => {
   const writersEnd = engine.indexOf('\n  };', writersStart);
   assert(writersStart !== -1 && writersEnd > writersStart, 'the Writers object is present');
   const writers = engine.slice(writersStart, writersEnd);
-  const writerNames = ['lightAvailable', 'lightConfiguration', 'lightPower', 'lightSwitch', 'serviceDue', 'syncBikeId', 'generic'];
+  const writerNames = ['lightAvailable', 'lightConfiguration', 'lightPower', 'lightSwitch', 'portActive', 'serviceDue', 'syncBikeId', 'generic'];
   for (const name of writerNames) {
     const at = writers.indexOf(name + '(');
     assert(at !== -1, 'writer present: ' + name);
@@ -1368,15 +1403,17 @@ check('lint: write-path invariants are pinned (source check)', () => {
     assert(!/\brawWrite\(/.test(src), name + ' does not transmit a raw write');
   }
 
-  // 6. No web storage in the engine, and in the UI only the theme key (or a
-  // comment). Write authorization and risk acceptance are never persisted.
+  // 6. No web storage in the engine. In the UI only the theme preference and
+  // the technical-details display preference are persisted (or a comment).
+  // Write authorization and risk acceptance are never persisted.
   assert(!/localStorage|sessionStorage/.test(engine), 'engine.js uses no web storage');
   const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
   for (const line of ui.split('\n')) {
     if (!/localStorage|sessionStorage/.test(line)) continue;
     const isComment = line.trim().startsWith('//');
-    const isTheme = line.includes('bes3-workshop-theme');
-    assert(isComment || isTheme, 'ui.js storage use is only the theme key or a comment: ' + line.trim());
+    const isTheme = line.includes('bes3-workshop-theme') || line.includes('TECH_KEY');
+    const isTech = line.includes('bes3.showTechDetails');
+    assert(isComment || isTheme || isTech, 'ui.js storage use is a theme/tech preference or a comment: ' + line.trim());
   }
 
   // 7. runPlan is the only place a one-shot grant is issued; writeVerified only
@@ -1386,9 +1423,9 @@ check('lint: write-path invariants are pinned (source check)', () => {
   assert(/owner\.approvedWrite = grant \|\| false;/.test(engine), 'runPlan issues the grant');
 });
 
-// 45b. The power-port card is a dedicated UI feature built on the existing
-// registry-bound writer: no new policy operation, no new engine writer, no
-// change to any gate. Source-level only; the DOM-level staging check is below.
+// 45b. The power-port card is a dedicated UI feature built on the dedicated
+// boolean writer: no new policy operation and no change to any gate. Source-level
+// only; the DOM-level staging check is below.
 check('source: power ports reuse the generic writer and are marked untested (source check)', () => {
   const ui = readFileSync(path.join(repo, 'web', 'workshop', 'ui.js'), 'utf8');
   const engine = readFileSync(path.join(repo, 'web', 'workshop', 'engine.js'), 'utf8');
@@ -1404,7 +1441,10 @@ check('source: power ports reuse the generic writer and are marked untested (sou
   assert(ui.includes('data-act="portRead"'), 'a read-only refresh control is present');
   assert(/async function readPortStates\(\)[\s\S]*?W\.readKey\(/.test(ui), 'the refresh performs reads only');
   assert(ui.includes("stageSteps('ports', steps)"), 'changes are staged, not sent');
-  assert(/W\.Writers\.generic\(t\.component, t\.name, v\.bytes, owner\)/.test(ui), 'each port uses the registry-bound generic writer');
+  assert(/W\.Writers\.portActive\(t\.name, choice === 'enable', owner\)/.test(ui),
+    'each port uses the decoded-boolean port writer');
+  assert(ui.includes('data-port-set="enable"') && ui.includes('data-port-set="disable"'),
+    'Active / Off pills drive the port choice');
   assert(ui.includes("cardChip('ports')"), 'the power-ports card carries one evidence chip');
   assert(ui.includes('if (source === \'light\' || source === \'ports\')'), 'card sources replace their own staged rows');
   assert(ui.includes('pending[i].source === source'), 'restaging removes only rows from the same card');
@@ -1424,7 +1464,7 @@ check('source: power ports reuse the generic writer and are marked untested (sou
   eq((ui.match(/<summary class="wcard__head"/g) || []).length, 5, 'five collapsible card headers');
   eq(Object.keys(POLICY.OP).length, 8, 'no new policy operation was introduced');
   eq((engine.match(/const Writers = \{/g) || []).length, 1, 'the Writers object is unchanged in shape');
-  assert(!engine.includes('powerPort('), 'no new engine writer was added');
+  assert(engine.includes('portActive(portName, on, owner)'), 'the dedicated boolean port writer is present');
   assert(!policy.includes('POWER_PORT:'), 'the gated write policy was not extended');
   for (const name of ['LOW_POWER_PORT_ACTIVE', 'HIGH_POWER_PORT_ACTIVE']) {
     eq(POLICY.genericTier('DriveUnit', name).tier, 'normal', name + ' is deliberately normal-tier');
@@ -1476,16 +1516,17 @@ check('source: Configuration tab name and homogeneous individual card icons (sou
 console.log('');
 console.log('Engine checks (fake transport, synthetic inputs)');
 
-async function checkAsync(name, fn) {
+async function checkAsync(name, fn, timeoutMs) {
   resetFrameCounters();
   const started = Date.now();
   let err = null;
   let timer = null;
+  const limit = timeoutMs || TEST_TIMEOUT_MS;
   try {
     await Promise.race([
       Promise.resolve().then(fn),
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('test timeout after ' + TEST_TIMEOUT_MS + ' ms')), TEST_TIMEOUT_MS);
+        timer = setTimeout(() => reject(new Error('test timeout after ' + limit + ' ms')), limit);
       }),
     ]);
   } catch (e) {
@@ -1543,6 +1584,13 @@ function createFakeDom() {
       const i = before ? this.children.indexOf(before) : -1;
       if (i === -1) this.children.push(child); else this.children.splice(i, 0, child);
       child.parentNode = this; registerTree(child); return child;
+    }
+    addEventListener(evt, fn) {
+      if (!this._listeners) this._listeners = {};
+      this._listeners[evt] = fn;
+    }
+    removeEventListener(evt) {
+      if (this._listeners) delete this._listeners[evt];
     }
     remove() {
       if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((c) => c !== this);
@@ -1861,6 +1909,52 @@ try {
   }
   W = sandbox.Bes3Workshop;
   assert(W, 'engine did not expose window.Bes3Workshop');
+
+  // v0.58.0 registry and decoder regressions (synthetic payloads only).
+  check('registry: confirmed power-on time, light power and boolean ports', () => {
+    const time = W.util.entryOf('DriveUnit', 'POWER_ON_TIME');
+    eq(time.unit, 'h', 'POWER_ON_TIME is measured in hours');
+    eq(time.confirmed, true, 'POWER_ON_TIME is confirmed');
+    const motor = W.util.entryOf('DriveUnit', 'POWER_ON_TIME_WITH_MOTOR_SUPPORT');
+    eq(motor.unit, 'h', 'POWER_ON_TIME_WITH_MOTOR_SUPPORT is measured in hours');
+    eq(motor.confirmed, true, 'POWER_ON_TIME_WITH_MOTOR_SUPPORT is confirmed');
+    const power = W.util.entryOf('DriveUnit', 'BIKE_LIGHT_POWER');
+    eq(power.confirmed, true, 'BIKE_LIGHT_POWER is confirmed');
+    assert(/Uint8NormFactor10Message/.test(power.notes || ''), 'the schema is recorded in the registry notes');
+    for (const name of ['LOW_POWER_PORT_ACTIVE', 'HIGH_POWER_PORT_ACTIVE']) {
+      const entry = W.util.entryOf('DriveUnit', name);
+      eq(entry.kind, 'bool', name + ' registry kind is bool');
+      eq(entry.confirmed, true, name + ' is confirmed');
+    }
+    eq(POLICY.OP.LIGHT_POWER.evidence, 'observed-working', 'LIGHT_POWER evidence is observed-working');
+  });
+
+  check('decoders: port booleans, walk assist and OEM field 3', () => {
+    const interpret = W.util.interpret;
+    const addrOf = W.util.addrOf;
+    for (const name of ['LOW_POWER_PORT_ACTIVE', 'HIGH_POWER_PORT_ACTIVE']) {
+      const addr = addrOf('DriveUnit', name);
+      const on = interpret('DriveUnit', name, addr, [0x08, 0x01]);
+      eq(on.value, true, name + ' 08 01 decodes to true');
+      eq(on.display, 'true', name + ' 08 01 displays as true');
+      const off = interpret('DriveUnit', name, addr, []);
+      eq(off.value, false, name + ' proto3 empty decodes to false');
+      eq(off.display, 'false', name + ' proto3 empty displays as false');
+    }
+    const walk = interpret('DriveUnit', 'WALK_ASSIST_CONFIGURATION',
+      addrOf('DriveUnit', 'WALK_ASSIST_CONFIGURATION'), [0x08, 0x01, 0x10, 0x90, 0x03]);
+    eq(walk.display, 'Enabled (4.0 km/h)', 'walk assist speed is scaled from 0.01 km/h');
+    eq(walk.value.enabled, true, 'walk assist enabled flag');
+    eq(walk.value.speedKmh, 4, 'walk assist speed value in km/h');
+    const walkOff = interpret('DriveUnit', 'WALK_ASSIST_CONFIGURATION',
+      addrOf('DriveUnit', 'WALK_ASSIST_CONFIGURATION'), [0x08, 0x00]);
+    eq(walkOff.display, 'Disabled', 'walk assist false displays as Disabled');
+    eq(walkOff.value.enabled, false, 'walk assist false value');
+    const oem = interpret('DriveUnit', 'BIKE_LIGHT_CONFIGURATION_OEM',
+      addrOf('DriveUnit', 'BIKE_LIGHT_CONFIGURATION_OEM'), [0x18, 0x01]);
+    eq(oem.display, 'OEM mode 1', 'OEM field-3 varint decodes to a mode label');
+    eq(oem.value, 1, 'OEM field-3 varint value');
+  });
 
   // Instrument the simulated transport only. No real transport is loaded.
   const demo = sandbox.Bes3WorkshopDemo;
@@ -3964,6 +4058,486 @@ check('source: the light theme, the modal focus and the re-read control (source 
     eq(W.busy, false, 'the single-writer lock was released');
   });
 
+  // Generic writer: negative authorization tests must be rejected before any
+  // transport I/O. They run against the fake demo transport only.
+  await checkAsync('generic writer: reserved and unknown targets rejected before I/O (zero frames)', async () => {
+    await W.startDemo();
+    W.setExperimental(true);
+    const before = mutations;
+    for (const t of [
+      { component: 'DriveUnit', name: 'BIKE_LIGHT_POWER' },
+      { component: 'DriveUnit', name: 'NOT_A_REGISTER' },
+    ]) {
+      const err = throws(() => W.Writers.generic(t.component, t.name, [0x08, 0x01]));
+      assert(err && err.code === 'WRITE_BLOCKED',
+        t.component + '.' + t.name + ' must be rejected before I/O: ' + (err && err.message));
+    }
+    eq(mutations, before, 'zero mutation frames for both rejected targets');
+  });
+
+  // Generic writer: a same-value write on an allowlisted normal-tier register
+  // sends exactly one WRITE frame and is confirmed by a fresh read-back.
+  await checkAsync('generic writer: same-value write sends exactly one frame and is confirmed', async () => {
+    await W.startDemo();
+    W.setExperimental(true);
+    const read = await W.readKey('RemoteControl', 'LANGUAGE');
+    assert(read && read.status === 'ok', 'LANGUAGE is readable in the demo fixture');
+    assert(read.hex && read.hex.length > 0, 'LANGUAGE has a non-empty payload');
+    const payload = read.hex.trim().split(/\s+/).map((h) => parseInt(h, 16));
+    const before = mutations;
+    const step = await W.Writers.generic('RemoteControl', 'LANGUAGE', payload);
+    eq(mutations, before + 1, 'exactly one WRITE frame');
+    eq(step.acked, true, 'acknowledgment recorded');
+    eq(step.applied, true, 'fresh read-back confirmed the same bytes');
+    const after = await W.readKey('RemoteControl', 'LANGUAGE');
+    eq(after.hex, read.hex, 'read-back bytes are unchanged');
+  });
+
+  // v0.58.0 regression: the dedicated port writer judges a fresh read-back as
+  // a decoded boolean, so a proto3 empty-off response verifies as applied.
+  await checkAsync('portActive: decoded-boolean verification and target guard', async () => {
+    await W.startDemo();
+    W.setExperimental(true);
+    const addr = W.util.addrOf('DriveUnit', 'HIGH_POWER_PORT_ACTIVE');
+    eq(W.util.interpret('DriveUnit', 'HIGH_POWER_PORT_ACTIVE', addr, []).value, false,
+      'proto3 empty payload decodes to false');
+    const before = mutations;
+    const step = await W.Writers.portActive('HIGH_POWER_PORT_ACTIVE', false);
+    eq(mutations, before + 1, 'the off write sends exactly one frame');
+    eq(step.applied, true, 'an off read-back verified as applied');
+    eq(step.sent, '08 00', 'the explicit off payload is unchanged');
+    const after = await W.readKey('DriveUnit', 'HIGH_POWER_PORT_ACTIVE');
+    eq(W.util.interpret('DriveUnit', 'HIGH_POWER_PORT_ACTIVE', addr,
+      after.hex ? after.hex.split(/\s+/).map((h) => parseInt(h, 16)) : []).value, false,
+      'the read-back is decoded as false');
+    const err = throws(() => W.Writers.portActive('BIKE_LIGHT', false));
+    eq(err && err.code, 'WRITE_BLOCKED', 'unsupported targets are rejected before I/O');
+    eq(mutations, before + 1, 'the rejected target sent no frame');
+    const engine = readFileSync(path.join(repo, 'web', 'workshop', 'engine.js'), 'utf8');
+    assert(engine.includes('(v) => v === on'), 'portActive expects the decoded boolean');
+  });
+
+  // The live runner and its suites must work end-to-end against the simulated
+  // transport. No browser is involved: the same engine and fake transport are
+  // used, and the runner only calls the public engine API.
+  await checkAsync('Dev live runner: read-only suite runs end-to-end in demo with zero write frames', async () => {
+    const liveDir = path.join(repo, 'web', 'dev', 'live');
+    // The Dev workbench is private: it is absent from the public tree.
+    requirePrivate(['web/dev/live/live-runner.js']);
+    for (const f of [
+      'web/dev/dev-logger.js',
+      'web/dev/live/live-write-helpers.js',
+      'web/dev/live/live-evidence.js',
+      'web/dev/live/live-runner.js',
+      'web/dev/live/live-suite-read.js',
+      'web/dev/live/live-suite-light.js',
+      'web/dev/live/live-suite-service.js',
+      'web/dev/live/live-suite-ports.js',
+      'web/dev/live/live-suite-id.js',
+      'web/dev/live/live-suite-writelab.js',
+      'web/dev/live/live-suite-generic.js',
+      'web/dev/live/live-suite-settings.js',
+      'web/dev/live/live-suite-diagnostics.js',
+      'web/dev/live/live-suite-sweep.js',
+      'web/dev/live/live-runner-selftests.js',
+    ]) {
+      const src = readFileSync(path.join(repo, f), 'utf8');
+      new Function('window', 'performance', src)(sandbox, performance);
+    }
+    const LR = sandbox.BES3DevLiveRunner;
+    assert(LR, 'live-runner.js did not expose BES3DevLiveRunner');
+    assert(LR.registry.length >= 10, 'the live suites registered scenarios, got ' + LR.registry.length);
+
+    await W.startDemo();
+    W.setExperimental(false);
+    const before = mutations;
+    const beforeWrites = writeFrames;
+    const summary = await LR.run('Read/Diagnostics');
+    eq(summary.passed, 3, 'all three read-only diagnostics passed');
+    eq(summary.failed, 0, 'no read-only diagnostic failed');
+    eq(summary.inconclusive, 0, 'no read-only diagnostic was inconclusive');
+    eq(writeFrames, beforeWrites, 'the read-only suite sent zero WRITE frames');
+  });
+
+  await checkAsync('Dev live runner: write scenario + verified restore sends exactly two frames in demo', async () => {
+    // The Dev workbench is private: it is absent from the public tree.
+    requirePrivate(['web/dev/live/live-runner.js']);
+    const LR = sandbox.BES3DevLiveRunner;
+    await W.startDemo();
+    W.setExperimental(true);
+    await LR.captureBaseline();
+
+    const baseline = LR.getBaseline();
+    eq(baseline.registers['DriveUnit.LOW_POWER_PORT_ACTIVE'].hex, '08 01',
+      'baseline recorded the raw port bytes');
+    eq(baseline.registers['DriveUnit.LOW_POWER_PORT_ACTIVE'].restorable, true,
+      'the raw baseline has a supported restoration path');
+
+    const before = mutations;
+    const summary = await LR.run('live.ports.toggle-low');
+    eq(summary.passed, 1, 'the toggle scenario passed');
+    const result = LR.getState().results[0];
+    eq(result.status, 'passed', 'the toggle result status is passed');
+    eq(result.recoveryOutcome, 'already-at-baseline',
+      'the enable step returns the port to its baseline, so no recovery write was needed');
+    eq(mutations - before, 2,
+      'exactly two mutation frames: the disable write and the enable write');
+
+    const after = await W.readKey('DriveUnit', 'LOW_POWER_PORT_ACTIVE');
+    eq(after.hex, '08 01', 'the register is back at its baseline bytes');
+  });
+
+  await checkAsync('Dev orchestrator: Fast Demo runs end-to-end, reports one summary and no write frames', async () => {
+    const liveDir = path.join(repo, 'web', 'dev', 'live');
+    requirePrivate(['web/dev/live/live-orchestrator.js']);
+    for (const f of [
+      'web/dev/dev-logger.js',
+      'web/dev/live/live-write-helpers.js',
+      'web/dev/live/live-evidence.js',
+      'web/dev/live/live-runner.js',
+      'web/dev/live/live-orchestrator.js',
+      'web/dev/live/live-suite-read.js',
+      'web/dev/live/live-suite-light.js',
+      'web/dev/live/live-suite-service.js',
+      'web/dev/live/live-suite-ports.js',
+      'web/dev/live/live-suite-id.js',
+      'web/dev/live/live-suite-writelab.js',
+      'web/dev/live/live-suite-generic.js',
+      'web/dev/live/live-suite-settings.js',
+      'web/dev/live/live-suite-diagnostics.js',
+      'web/dev/live/live-suite-sweep.js',
+      'web/dev/live/live-runner-selftests.js',
+    ]) {
+      const src = readFileSync(path.join(repo, f), 'utf8');
+      new Function('window', 'performance', src)(sandbox, performance);
+    }
+    const O = sandbox.BES3DevOrchestrator;
+    await W.startDemo();
+    W.setExperimental(false);
+
+    const manifest = await O.prepare('fast-demo');
+    assert(Object.isFrozen(manifest), 'the prepared manifest is frozen before approval');
+    eq(manifest.requiresWrite, false, 'fast-demo writes nothing');
+    eq(manifest.sessionToken, undefined, 'the exported manifest does not contain the authorization token');
+    eq(manifest.sessionRef, sandbox.BES3DevLiveRunner.sessionRefOf(W.authorizationToken),
+      'the manifest carries an opaque session reference instead');
+    eq(manifest.writeRows.length, 0, 'a read-only profile has no write rows');
+    eq(manifest.recoveryRows.length, 0, 'a read-only profile has no recovery rows');
+    eq(manifest.runId.length > 0, true, 'the manifest carries the run ID');
+
+    const beforeWrites = writeFrames;
+    const out = await O.run('fast-demo');
+    const s = out.object.summary;
+    eq(s.planned, manifest.scenarioIds.length, 'every planned scenario was reported');
+    eq(s.completed, s.planned, 'every planned scenario completed');
+    eq(s.failed, 0, 'no scenario failed');
+    eq(s.inconclusive, 0, 'no scenario was inconclusive');
+    eq(s.healthy, true, 'the run is healthy');
+    eq(out.object.terminationReason, 'completed', 'a normal run reports its termination reason');
+    eq(writeFrames, beforeWrites, 'the fast-demo profile sent zero WRITE frames');
+    assert(/^bes3-dev-run-all-.*\.json$/.test(out.filename), 'combined filename: ' + out.filename);
+    assert(out.object.groups.length > 0, 'the report contains per-group records');
+    assert(out.object.baseline, 'the report records the baseline');
+    assert(out.object.limitations.length > 0, 'the report states its limitations');
+    assert(out.object.groups.some((g) => g.logs.length > 0),
+      'the report carries per-scenario event logs with sequence numbers');
+    assert(out.json.length > 1000, 'the combined JSON is populated');
+    eq(O.isPrepared(), false, 'the prepared plan is consumed and cannot be replayed');
+  });
+
+  await checkAsync('Dev manifest: exact write rows, bounded use counts and session binding (Extended)', async () => {
+    requirePrivate(['web/dev/live/live-orchestrator.js']);
+    const O = sandbox.BES3DevOrchestrator;
+    const LR = sandbox.BES3DevLiveRunner;
+    await W.startDemo();
+    W.setExperimental(true);
+
+    const m = await O.prepare('extended');
+    assert(Object.isFrozen(m), 'the manifest is frozen');
+    assert(Object.isFrozen(m.writeRows), 'the write rows are frozen');
+    eq(m.sessionToken, undefined, 'the exported manifest does not contain the authorization token');
+    eq(m.sessionRef, sandbox.BES3DevLiveRunner.sessionRefOf(W.authorizationToken),
+      'the manifest binds an opaque session reference');
+    eq(m.sessionMode, 'demo', 'the manifest binds the session mode');
+    assert(m.writeRows.length >= 3, 'the extended profile has reviewed write rows');
+    m.writeRows.forEach((r) => {
+      assert(r.op && r.component && r.name, 'a write row names its operation and target');
+      assert(typeof r.bytes === 'string', 'a write row carries canonical payload bytes');
+      assert(r.remaining >= 1, 'a write row carries a bounded use count');
+    });
+    assert(m.recoveryRows.length >= 1, 'the manifest lists recovery rows');
+    m.recoveryRows.forEach((r) => {
+      eq(typeof r.restorable, 'boolean', 'a recovery row states whether restoration is supported');
+    });
+    assert(m.skippedWrites.some((s) => /no supported restoration path/.test(s.reason)),
+      'a mutation without a supported recovery path is skipped before approval');
+    eq(m.scenarioIds.includes('live.light.power-variants'), false,
+      'unselected electrical variants are excluded from auto-run');
+    eq(m.scenarioIds.includes('live.ports.toggle-high'), false,
+      'the unselected high-power port is excluded from auto-run');
+    eq(m.scenarioIds.includes('live.light.restore'), false,
+      'the redundant light restore scenario is excluded from auto-run');
+
+    const before = writeFrames;
+    const out = await O.run('extended');
+    const s = out.object.summary;
+    eq(out.object.manifest, m, 'the executed manifest is the approved frozen object');
+    eq(s.failed, 0, 'no scenario failed');
+    eq(s.notRun, 0, 'no group was left unexecuted');
+    eq(s.healthy, true, 'the run is healthy');
+    const writeScenarios = m.scenarioIds.filter((id) => {
+      const sc = LR.registry.filter((x) => x.id === id)[0];
+      return sc && sc.requiresWrite;
+    }).length;
+    assert(writeFrames - before <= 2 * writeScenarios,
+      'write frames stay within one scenario write plus one recovery per write scenario');
+    assert(writeFrames - before >= 1, 'the approved port write was sent');
+  });
+
+  await checkAsync('Dev grants: an unlisted target and a reused approval are both refused', async () => {
+    requirePrivate(['web/dev/live/live-runner.js']);
+    const LR = sandbox.BES3DevLiveRunner;
+    await W.startDemo();
+    W.setExperimental(true);
+    await LR.captureBaseline();
+
+    // The same op+payload on a different target is not authorized.
+    const wrongTarget = [{
+      op: 'GENERIC_WRITE', component: 'DriveUnit', name: 'HIGH_POWER_PORT_ACTIVE',
+      bytes: '08 00', remaining: 1,
+    }];
+    let before = writeFrames;
+    await LR.run('live.ports.toggle-low', { grants: wrongTarget });
+    eq(writeFrames, before, 'a grant for another target never authorizes the low port');
+
+    // One grant cannot be spent twice.
+    LR.register({
+      id: 'test.reuse-grant', suite: 'Test Harness',
+      name: 'Attempt the same approved step twice',
+      requiresConnection: true, requiresWrite: true, timeout: 10000,
+      run: async (ctx) => {
+        const step = ctx.makePortStep('LOW_POWER_PORT_ACTIVE', false);
+        await ctx.runWrite([step]);
+        await ctx.runWrite([step]);
+      },
+    });
+    const single = [{
+      op: 'GENERIC_WRITE', component: 'DriveUnit', name: 'LOW_POWER_PORT_ACTIVE',
+      bytes: '08 00', remaining: 1,
+    }];
+    before = writeFrames;
+    await LR.run('test.reuse-grant', { grants: single });
+    eq(writeFrames - before, 1, 'the second use of the same approval is refused');
+
+    // Tidy up the test harness state: the refused second step never ran, but
+    // the first one did.
+    await LR.restoreBaseline({ keys: ['DriveUnit.LOW_POWER_PORT_ACTIVE'] });
+  });
+
+  await checkAsync('Dev recovery: a session change invalidates recovery without sending a write', async () => {
+    requirePrivate(['web/dev/live/live-runner.js']);
+    const LR = sandbox.BES3DevLiveRunner;
+    await W.startDemo();
+    W.setExperimental(true);
+    await LR.captureBaseline();
+
+    // Move the port away from its baseline so recovery would have to write.
+    const step = {
+      op: 'GENERIC_WRITE', component: 'DriveUnit', name: 'LOW_POWER_PORT_ACTIVE',
+      address: W.util.addrOf('DriveUnit', 'LOW_POWER_PORT_ACTIVE'),
+      bytes: '08 00', typedName: '', continueOnFailure: true,
+      run: (o) => W.Writers.generic('DriveUnit', 'LOW_POWER_PORT_ACTIVE', [0x08, 0x00], o),
+    };
+    await W.runPlan([step], null, {});
+
+    // A new authorization generation stands in for a replacement session.
+    W.setExperimental(false);
+    W.setExperimental(true);
+
+    const before = writeFrames;
+    const rec = await LR.restoreBaseline({ keys: ['DriveUnit.LOW_POWER_PORT_ACTIVE'] });
+    eq(rec.overall, 'recovery-not-attempted-session-lost',
+      'recovery refuses a session that differs from the baseline session');
+    eq(writeFrames, before, 'no recovery frame was sent after the session changed');
+  });
+
+  await checkAsync('Dev recovery: abort sends no recovery write', async () => {
+    requirePrivate(['web/dev/live/live-runner.js']);
+    const LR = sandbox.BES3DevLiveRunner;
+    await W.startDemo();
+    W.setExperimental(true);
+    await LR.captureBaseline();
+
+    LR.register({
+      id: 'test.abort-recovery', suite: 'Test Harness',
+      name: 'Wait, then attempt recovery after an abort',
+      requiresConnection: true, requiresWrite: true, timeout: 10000,
+      run: async (ctx) => {
+        try {
+          await ctx.wait(2000);
+        } finally {
+          const rec = await LR.restoreBaseline({ keys: ['DriveUnit.LOW_POWER_PORT_ACTIVE'] });
+          ctx.setRecovery(rec.overall);
+        }
+      },
+    });
+
+    const running = LR.run('test.abort-recovery');
+    await new Promise((r) => setTimeout(r, 50));
+    const before = writeFrames;
+    LR.abortWrites();
+    await running;
+    eq(writeFrames, before, 'abort prevented every later frame, including recovery');
+    const result = LR.getState().results[0];
+    eq(result.recoveryOutcome, 'recovery-aborted-by-user',
+      'the recovery outcome states that the user aborted it');
+  });
+
+  await checkAsync('Dev lifecycle: a timed-out task cannot transmit into the next scenario', async () => {
+    requirePrivate(['web/dev/live/live-runner.js']);
+    const LR = sandbox.BES3DevLiveRunner;
+    await W.startDemo();
+    W.setExperimental(true);
+    await LR.captureBaseline();
+
+    LR.register({
+      id: 'test.timeout-write', suite: 'Test Harness',
+      name: 'Write after the scenario deadline',
+      requiresConnection: true, requiresWrite: true, timeout: 100,
+      run: async (ctx) => {
+        await ctx.wait(300);
+        await ctx.runWrite([ctx.makePortStep('LOW_POWER_PORT_ACTIVE', true)]);
+      },
+    });
+    LR.register({
+      id: 'test.after-timeout', suite: 'Test Harness',
+      name: 'Runs after the timed-out scenario',
+      requiresConnection: true, requiresWrite: false, timeout: 5000,
+      run: async (ctx) => { ctx.ok(true, 'the next scenario started'); },
+    });
+
+    const before = writeFrames;
+    const first = await LR.run('test.timeout-write');
+    eq(first.timedOut, 1, 'the first scenario timed out');
+    const second = await LR.run('test.after-timeout');
+    eq(second.passed, 1, 'the next scenario ran normally');
+    // Give the orphaned task time to attempt its write; it must be refused.
+    await new Promise((r) => setTimeout(r, 500));
+    eq(writeFrames, before, 'the orphaned task sent no write frame');
+  });
+
+  await checkAsync('Dev baseline: exact bytes are compared, never truthily coerced', async () => {
+    requirePrivate(['web/dev/live/live-runner.js']);
+    const LR = sandbox.BES3DevLiveRunner;
+    const H = sandbox.BES3DevWriteHelpers;
+
+    eq(H.matchesBaseline({ status: 'ok', hex: '08 00' }, '08 00'), true,
+      'an explicit 08 00 read matches an 08 00 baseline');
+    eq(H.matchesBaseline({ status: 'ok', hex: '08 01' }, '08 00'), false,
+      'an 08 01 read never matches an 08 00 baseline');
+
+    const spec = LR.restoreSpecFor({
+      target: 'DriveUnit.LOW_POWER_PORT_ACTIVE', component: 'DriveUnit',
+      name: 'LOW_POWER_PORT_ACTIVE', status: 'ok', hex: '08 00', decoded: false,
+    });
+    eq(spec.unsupported, undefined, 'an 08 00 baseline has a supported writer');
+    eq(spec.bytes, '08 00', 'the recovery payload stays 08 00');
+
+    const empty = LR.restoreSpecFor({
+      target: 'DriveUnit.LOW_POWER_PORT_ACTIVE', component: 'DriveUnit',
+      name: 'LOW_POWER_PORT_ACTIVE', status: 'ok', hex: '', decoded: false,
+    });
+    assert(!empty.unsupported, 'an empty port baseline has a supported restore path');
+    eq(empty.bytes, '08 00', 'an empty port baseline restores to explicit off bytes');
+    eq(LR.isHealthyRecovery('restore-unconfirmed'), false,
+      'an unconfirmed restore is not healthy');
+    eq(LR.isHealthyRecovery('restored-verified'), true,
+      'a verified restore is healthy');
+
+    const described = H.describeRead({ status: 'ok', hex: '', value: false });
+    eq(described.state, 'empty', 'an empty payload is classified as empty');
+    eq(described.decoded, null, 'an empty payload is not surfaced as a decoded false');
+  });
+
+  await checkAsync('Dev light suite: recovery stays within the light registers', async () => {
+    requirePrivate(['web/dev/live/live-suite-light.js']);
+    const src = readFileSync(path.join(repo, 'web', 'dev', 'live', 'live-suite-light.js'), 'utf8');
+    eq(src.includes('SERVICE_DUE'), false, 'the light suite never mentions the service register');
+    eq(src.includes('PORT_ACTIVE'), false, 'the light suite never mentions a power port');
+
+    const LR = sandbox.BES3DevLiveRunner;
+    await W.startDemo();
+    W.setExperimental(true);
+    await LR.captureBaseline();
+    await LR.run('live.light.runtime-cycle');
+    const touched = LR.getTouched();
+    assert(touched.every((t) => t.indexOf('DriveUnit.BIKE_LIGHT') === 0),
+      'every touched target is a light register: ' + touched.join(', '));
+  });
+
+  check('Dev light suite: a failed Step 1 skips Step 2 (source check)', () => {
+    requirePrivate(['web/dev/live/live-suite-light.js']);
+    const src = readFileSync(path.join(repo, 'web', 'dev', 'live', 'live-suite-light.js'), 'utf8');
+    assert(src.includes('if (!ok1)'), 'the failed first step is detected');
+    assert(src.includes('skipping Step 2'), 'the early return states why Step 2 was skipped');
+    assert(src.includes('BIKE_LIGHT_CONFIGURATION=1'), 'the Always-On hint is present');
+  });
+
+  await checkAsync('Dev light suite: power-cycle writes a bounded offset and restores the baseline', async () => {
+    requirePrivate(['web/dev/live/live-suite-light.js']);
+    const LR = sandbox.BES3DevLiveRunner;
+    await W.startDemo();
+    W.setExperimental(true);
+    await LR.captureBaseline();
+    const beforeHex = W.state.values['DriveUnit.BIKE_LIGHT_POWER'].hex;
+    const before = mutations;
+    const summary = await LR.run('live.light.power-cycle');
+    eq(summary.passed, 1, 'the power-cycle scenario passed');
+    const result = LR.getState().results[0];
+    eq(result.status, 'passed', 'the result status is passed');
+    eq(mutations - before, 2, 'one bounded write plus the verified baseline restore');
+    eq(W.state.values['DriveUnit.BIKE_LIGHT_POWER'].hex, beforeHex, 'the power budget baseline is restored');
+  });
+
+  await checkAsync('Dev report: exactly one automatic download and a persistent manual fallback', () => {
+    requirePrivate(['web/dev/live/live-ui.js']);
+    const uiSrc = readFileSync(path.join(repo, 'web', 'dev', 'live', 'live-ui.js'), 'utf8');
+    const start = uiSrc.indexOf('async function onRunEverything');
+    const end = uiSrc.indexOf('function onExportJson');
+    assert(start >= 0 && end > start, 'the Run Everything handler is present');
+    const body = uiSrc.slice(start, end);
+    const calls = body.match(/ORCH\.downloadLast\('auto'\)/g) || [];
+    eq(calls.length, 1, 'one automatic download attempt per run');
+    assert(/downloadBtn\.disabled = !\(ORCH && ORCH\.getLast\(\)\)/.test(uiSrc),
+      'the manual Download button stays available after the run');
+
+    const orchSrc = readFileSync(path.join(repo, 'web', 'dev', 'live', 'live-orchestrator.js'), 'utf8');
+    for (const token of ['terminationReason', 'halted', 'unresolvedTargets', 'incomplete',
+      'recovery-aborted-by-user', 'recovery-not-attempted-session-lost',
+      'recovery-not-attempted-nonquiescent']) {
+      assert(orchSrc.includes(token), 'the combined report supports ' + token);
+    }
+    assert(orchSrc.includes('combined.haltReason'), 'a halted run states why it halted');
+  });
+
+  await checkAsync('Dev stop: a user stop finalises an incomplete report and downloads it once', async () => {
+    requirePrivate(['web/dev/live/live-orchestrator.js']);
+    const O = sandbox.BES3DevOrchestrator;
+    await W.startDemo();
+    W.setExperimental(false);
+    await O.prepare('fast-demo');
+
+    const running = O.run('fast-demo');
+    await new Promise((r) => setTimeout(r, 30));
+    O.stop();
+    const out = await running;
+    eq(out.object.terminationReason, 'user-stop', 'the report states that the user stopped the run');
+    eq(out.object.incomplete, true, 'a stopped run is marked incomplete');
+    assert(O.getLast(), 'the report is retained for the manual Download button');
+    assert(out.object.groups.length > 0, 'the partial report still records its groups');
+    assert(out.json.length > 500, 'the partial report is populated');
+  });
+
   await checkAsync('no real device access occurred during the engine run', () => {
     eq(hardware.calls, 0, 'hardware stub never invoked');
     eq(sandbox.navigator.usb, undefined, 'navigator.usb remains undefined');
@@ -4047,6 +4621,16 @@ check('source: the light theme, the modal focus and the re-read control (source 
   });
 
   const writeView = () => ui.doc.getElementById('view-write');
+  const setPortPill = (key, choice) => {
+    const btn = writeView().querySelector(`[data-port-set="${choice}"][data-port-key="${key}"]`);
+    assert(btn, `${key} port pill ${choice} is rendered`);
+    btn.onclick();
+  };
+  const enableTechDetails = () => {
+    const box = ui.doc.getElementById('techDetails');
+    assert(box, 'the technical-details toggle is present');
+    if (!box.checked) { box.checked = true; box.onchange(); }
+  };
   const runCloseButton = () => ui.doc.querySelector('#runClose');
   const finishRunModal = async () => {
     for (let i = 0; i < 5000; i++) {
@@ -4080,6 +4664,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
   await checkAsync('UI service interval: Clear is always offered, reads first and stages the empty payload', async () => {
     assert(ui, 'the UI sandbox loaded');
     await openWriteTab();
+    enableTechDetails();
     resetFrameCounters();
     delete W.state.values['RemoteControl.SERVICE_DUE'];
     sandbox.Bes3WorkshopUI.render();
@@ -4315,16 +4900,15 @@ check('source: the light theme, the modal focus and the re-read control (source 
     eq(W.state.values['DriveUnit.LOW_POWER_PORT_ACTIVE'].hex, '08 01', 'the low-power port is read');
     eq(W.state.values['DriveUnit.HIGH_POWER_PORT_ACTIVE'].hex, '08 00', 'the high-power port is read');
     // Unchanged is the default; staging it must remain a no-op.
+    enableTechDetails();
     const initialHtml = writeView().innerHTML;
-    assert(/id="port_LOW"/.test(initialHtml) && /id="port_HIGH"/.test(initialHtml), 'both port selectors are rendered');
-    assert(/value="unchanged" selected/.test(initialHtml), 'both ports default to Unchanged');
+    assert(/data-port-key="LOW"/.test(initialHtml) && /data-port-key="HIGH"/.test(initialHtml), 'both port pill groups are rendered');
+    assert(!/data-port-set="unchanged"/.test(initialHtml), 'both ports default to No change');
     assert(!/id="pendingChanges"/.test(initialHtml), 'no change is staged at first');
-    // Change only the low-power port to Disable (the demo seed is 08 01).
-    const low0 = ui.doc.getElementById('port_LOW');
-    assert(low0, 'the low-power port selector is present');
-    low0.value = 'disable';
-    low0.onchange();
-    assert(/value="disable" selected/.test(writeView().innerHTML), 'the choice survives a re-render');
+    // Change only the low-power port to Off (the demo seed is on).
+    setPortPill('LOW', 'disable');
+    assert(/data-port-set="disable" data-port-key="LOW"[^>]*aria-pressed="true"/.test(writeView().innerHTML),
+      'the choice survives a re-render');
     await ui.dom.dispatchAction('portApply');
     const keys = Array.from(ui.doc.querySelectorAll('[data-pending-key]')).map((n) => n.dataset.pendingKey);
     eq(keys.length, 1, 'only the changed port is staged');
@@ -4581,10 +5165,8 @@ check('source: the light theme, the modal focus and the re-read control (source 
     await ui.dom.dispatchAction('portRead');
     // Demo seeds: LOW = 08 01, HIGH = 08 00. Both choices are real changes,
     // so the same-value guard does not skip either step.
-    const low = ui.doc.getElementById('port_LOW');
-    low.value = 'disable'; low.onchange();
-    const high = ui.doc.getElementById('port_HIGH');
-    high.value = 'enable'; high.onchange();
+    setPortPill('LOW', 'disable');
+    setPortPill('HIGH', 'enable');
     await ui.dom.dispatchAction('portApply');
     eq(ui.doc.querySelectorAll('[data-pending-key]').length, 2, 'both changed ports are staged');
     const before = mutations;
@@ -4611,33 +5193,28 @@ check('source: the light theme, the modal focus and the re-read control (source 
     await openWriteTab();
     await ui.dom.dispatchAction('portRead');
     await ui.dom.dispatchAction('svcApply');
-    let low = ui.doc.getElementById('port_LOW');
-    low.value = 'disable'; low.onchange();
-    let high = ui.doc.getElementById('port_HIGH');
-    high.value = 'enable'; high.onchange();
+    setPortPill('LOW', 'disable');
+    setPortPill('HIGH', 'enable');
     await ui.dom.dispatchAction('portApply');
     let keys = Array.from(ui.doc.querySelectorAll('[data-pending-key]')).map((n) => n.dataset.pendingKey);
     assert(keys.includes('RemoteControl.SERVICE_DUE'), 'the staged service row survives port staging');
     assert(keys.includes('DriveUnit.LOW_POWER_PORT_ACTIVE') && keys.includes('DriveUnit.HIGH_POWER_PORT_ACTIVE'), 'both port rows are staged');
     // Restage with LOW back to Unchanged: the stale LOW row must disappear and
     // the service row (a different source) must not be discarded.
-    low = ui.doc.getElementById('port_LOW');
-    low.value = 'unchanged'; low.onchange();
+    setPortPill('LOW', 'unchanged');
     await ui.dom.dispatchAction('portApply');
     keys = Array.from(ui.doc.querySelectorAll('[data-pending-key]')).map((n) => n.dataset.pendingKey);
     eq(keys.length, 2, 'one port row plus the service row remain');
     assert(!keys.includes('DriveUnit.LOW_POWER_PORT_ACTIVE'), 'an unchanged port is never written');
     assert(keys.includes('RemoteControl.SERVICE_DUE'), 'staging ports does not delete other cards\' rows');
     // Both ports unchanged is reported as a no-op.
-    high = ui.doc.getElementById('port_HIGH');
-    high.value = 'unchanged'; high.onchange();
+    setPortPill('HIGH', 'unchanged');
     assert(/Nothing to write/.test(writeView().innerHTML), 'both unchanged is reported as no-op');
     // An unread value is never guessed as off.
     delete W.state.values['DriveUnit.HIGH_POWER_PORT_ACTIVE'];
     sandbox.Bes3WorkshopUI.render();
     ui.switchTab('write');
-    const h = ui.doc.getElementById('port_HIGH');
-    h.value = 'enable'; h.onchange();
+    setPortPill('HIGH', 'enable');
     assert(/Read High Power Port first/.test(writeView().innerHTML), 'an unread value blocks staging');
   });
 
@@ -4651,8 +5228,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
     W.state.values['DriveUnit.LOW_POWER_PORT_ACTIVE'] = { status: 'ok', hex: '', display: 'off' };
     sandbox.Bes3WorkshopUI.render();
     ui.switchTab('write');
-    const low = ui.doc.getElementById('port_LOW');
-    low.value = 'disable'; low.onchange();
+    setPortPill('LOW', 'disable');
     // portChanges should recognise empty hex as already-off and produce no step.
     await ui.dom.dispatchAction('portApply');
     const keys = Array.from(ui.doc.querySelectorAll('[data-pending-key]')).map((n) => n.dataset.pendingKey);
@@ -4662,8 +5238,7 @@ check('source: the light theme, the modal focus and the re-read control (source 
     W.state.values['DriveUnit.LOW_POWER_PORT_ACTIVE'] = { status: 'ok', hex: '08 01', display: 'on' };
     sandbox.Bes3WorkshopUI.render();
     ui.switchTab('write');
-    const low2 = ui.doc.getElementById('port_LOW');
-    low2.value = 'disable'; low2.onchange();
+    setPortPill('LOW', 'disable');
     await ui.dom.dispatchAction('portApply');
     const keys2 = Array.from(ui.doc.querySelectorAll('[data-pending-key]')).map((n) => n.dataset.pendingKey);
     assert(keys2.includes('DriveUnit.LOW_POWER_PORT_ACTIVE'),
@@ -4693,13 +5268,12 @@ check('source: the light theme, the modal focus and the re-read control (source 
     const openTag = new RegExp('<details[^>]*id="lightCard"[^>]*>').exec(html);
     assert(openTag && /\bopen\b/.test(openTag[0]), 'the opened card stays open after its control re-renders');
     // A session change collapses every card again and clears the port choice.
-    const low = ui.doc.getElementById('port_LOW');
-    low.value = 'disable'; low.onchange();
+    setPortPill('LOW', 'disable');
     W.simulateConnectionLoss();
     sandbox.Bes3WorkshopUI.render();
     ui.switchTab('write');
     html = writeView().innerHTML;
-    assert(/value="unchanged" selected/.test(html), 'the port choice is cleared on session change');
+    assert(!/data-port-set="unchanged"/.test(html), 'the port choice is cleared on session change');
     for (const id of ids) {
       const tag = new RegExp('<details[^>]*id="' + id + '"[^>]*>').exec(html);
       assert(tag && !/\bopen\b/.test(tag[0]), id + ' is closed again after a session change');
@@ -5677,19 +6251,983 @@ await checkAsync('Live Data BLE: early frames are ingested, zero is valid, disco
   }
 });
 
+// ── Dev acceptance and adversarial lifecycle (synthetic only) ──────────────
+
+function loadLiveStack() {
+  const files = [
+    'web/dev/dev-logger.js',
+    'web/dev/live/live-write-helpers.js',
+    'web/dev/live/live-evidence.js',
+    'web/dev/live/live-runner.js',
+    'web/dev/live/live-acceptance-fixture.js',
+    'web/dev/live/live-orchestrator.js',
+    'web/dev/live/live-suite-read.js',
+    'web/dev/live/live-suite-light.js',
+    'web/dev/live/live-suite-service.js',
+    'web/dev/live/live-suite-ports.js',
+    'web/dev/live/live-suite-id.js',
+    'web/dev/live/live-suite-writelab.js',
+    'web/dev/live/live-suite-generic.js',
+    'web/dev/live/live-suite-settings.js',
+    'web/dev/live/live-suite-diagnostics.js',
+    'web/dev/live/live-suite-sweep.js',
+    'web/dev/live/live-runner-selftests.js',
+  ];
+  for (const f of files) {
+    const src = readFileSync(path.join(repo, f), 'utf8');
+    new Function('window', 'performance', src)(sandbox, performance);
+  }
+  return { LR: sandbox.BES3DevLiveRunner, O: sandbox.BES3DevOrchestrator };
+}
+
+function addTestProfile(O, id, groups) {
+  O.PROFILES[id] = {
+    id: id, label: 'Synthetic test profile', description: 'Test-only profile.',
+    groups: groups,
+  };
+}
+
+check('Dev profiles: full-hardware and acceptance wire live.light.power-cycle', () => {
+  requirePrivate(['web/dev/live/live-orchestrator.js', 'web/dev/live/live-suite-light.js']);
+  const { O } = loadLiveStack();
+  for (const id of ['full-hardware', 'full-write-demo']) {
+    const profile = O.PROFILES[id];
+    assert(profile, id + ' profile exists');
+    const group = profile.groups.find((g) => g.name === 'Bike Light');
+    assert(group, id + ' has a Bike Light group');
+    assert(group.filter({ id: 'live.light.power-cycle', suite: 'Bike Light', requiresWrite: true }),
+      id + ' includes live.light.power-cycle');
+  }
+});
+
+check('Dev baseline: an empty HIGH port baseline restores to 08 00 via portActive', () => {
+  requirePrivate(['web/dev/live/live-runner.js']);
+  const { LR } = loadLiveStack();
+  const spec = LR.restoreSpecFor({
+    target: 'DriveUnit.HIGH_POWER_PORT_ACTIVE', component: 'DriveUnit',
+    name: 'HIGH_POWER_PORT_ACTIVE', status: 'ok', hex: '', decoded: false,
+  });
+  assert(!spec.unsupported, 'an empty port baseline has a supported restore path: '
+    + (spec.unsupported || ''));
+  eq(spec.bytes, '08 00', 'an empty port baseline is restored with explicit off bytes');
+  const src = readFileSync(path.join(repo, 'web', 'dev', 'live', 'live-runner.js'), 'utf8');
+  assert(src.includes('W.Writers.portActive(entry.name, false, o)'),
+    'the empty-off restore calls the decoded-boolean port writer');
+});
+
+function writeStep(component, name, bytes) {
+  return {
+    op: 'GENERIC_WRITE', component: component, name: name, bytes: bytes,
+    address: W.util.addrOf(component, name), typedName: name, continueOnFailure: true,
+    label: 'test write ' + component + '.' + name + ' = ' + bytes,
+    run: (o) => W.Writers.generic(component, name,
+      bytes === '' ? [] : bytes.split(/\s+/).map((x) => parseInt(x, 16)), o),
+  };
+}
+
+// 1. Full-write synthetic Demo acceptance: supported nonempty baselines, both
+// ports, light, service, valid ID match and the generic same-value smoke.
+await checkAsync('Dev acceptance: full-write synthetic Demo covers supported groups and reconciles its report', async () => {
+  requirePrivate(['web/dev/live/live-orchestrator.js', 'web/dev/live/live-acceptance-fixture.js']);
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  const { LR, O } = loadLiveStack();
+  const FX = sandbox.BES3DevAcceptanceFixture;
+  assert(FX, 'the acceptance fixture is exposed');
+  FX.activate();
+  try {
+    await W.startDemo();
+    W.setExperimental(true);
+    const m = await O.prepare('full-write-demo');
+    eq(m.profile, 'full-write-demo', 'the acceptance profile was selected');
+    eq(m.requiresWrite, true, 'the acceptance profile writes');
+    eq(m.sessionToken, undefined, 'the manifest does not carry the authorization token');
+    assert(m.writeRows.length >= 6, 'reviewed write rows: ' + m.writeRows.length);
+    assert(m.recoveryRows.length >= 4, 'recovery rows: ' + m.recoveryRows.length);
+    eq(m.scenarioIds.includes('live.ports.toggle-low'), true, 'the low port is included');
+    eq(m.scenarioIds.includes('live.ports.toggle-high'), true, 'the high port is included');
+    eq(m.scenarioIds.includes('live.generic.same-value-smoke'), true, 'the same-value smoke is included');
+    eq(m.scenarioIds.includes('live.light.restore'), false, 'the redundant light restore is excluded');
+    assert(m.recoveryRows.some((r) => /SERVICE_DUE/.test(r.target)), 'the service target has a recovery row');
+
+    const before = writeFrames;
+    const out = await O.run('full-write-demo');
+    const o = out.object;
+    assert(o.coverage, 'the report carries a coverage object');
+    eq(o.coverage.requestedGroups, m.groups.length, 'requested groups are counted');
+    assert(o.coverage.executedGroups >= 5, 'executed groups: ' + o.coverage.executedGroups);
+    eq(o.coverage.executedScenarios + o.coverage.skippedScenarios + o.coverage.notRunScenarios,
+      o.coverage.requestedScenarios, 'scenario accounting reconciles');
+    eq(o.reportIntegrity.finalizedAfterRecovery, true, 'the report is finalised after recovery');
+    eq(o.reportIntegrity.allResultsIncluded, true, 'every child result is included');
+    eq(o.reportIntegrity.manifestMutationEntries, true, 'mutations are tied to manifest rows');
+    eq(o.reportIntegrity.manifestRecoveryEntries, true, 'recoveries are tied to manifest rows');
+    eq(o.reportIntegrity.identifiersMasked, true, 'identifier bytes are masked');
+    eq(o.reportIntegrity.rawTraceSensitive, true, 'the raw trace export is marked sensitive');
+    eq(o.reportIntegrity.autoDownloadPolicy, 'exactly-one-per-terminal-path',
+      'the report states the auto-download policy');
+    eq(o.reportIntegrity.manualDownloadAvailable, true, 'manual download remains available');
+    eq(o.reportIntegrity.unknownOutcomeIsNotVerified, true, 'unknown outcomes are never verified');
+
+    const all = o.groups.reduce((acc, g) => acc.concat(g.results), []);
+    const smoke = all.filter((r) => r.id === 'live.generic.same-value-smoke')[0];
+    assert(smoke, 'the same-value smoke result is present');
+    assert(Array.isArray(smoke.verdicts), 'the smoke result carries verdicts: '
+      + JSON.stringify(Object.keys(smoke)) + ' status=' + smoke.status
+      + ' reason=' + (smoke.failureReason || ''));
+    assert(smoke.verdicts.some((v) => /Existing bytes still match; changed-value acceptance was not tested\./
+      .test(v.physicalObservation)), 'the same-value physical observation uses the neutral wording');
+    assert(!/Observed one dispatch/.test(out.json),
+      'the report never claims a dispatch count without a frame counter');
+    assert(!/stored value|stored change/.test(out.json),
+      'the report does not claim a stored physical effect');
+    const idr = all.filter((r) => r.id === 'live.id.read-both')[0];
+    assert(idr, 'the ID comparison result is present');
+    assert(idr.status === 'passed', 'the valid synthetic ID match passes: ' + idr.status
+      + (idr.failureReason ? ' — ' + idr.failureReason : ''));
+    const finalBase = all.filter((r) => r.id === 'live.acceptance.final-baseline')[0];
+    assert(finalBase, 'the final read-only baseline comparison is present');
+    eq(finalBase.status, 'passed', 'the final baseline comparison passes: ' + finalBase.status);
+    eq(o.groups[o.groups.length - 1].name, 'Final baseline (read-only)',
+      'the final comparison is the last group');
+
+    const writeGroups = o.groups.filter((g) => g.results.some((r) => r.verdicts && r.verdicts.length));
+    assert(writeGroups.length >= 3, 'at least three write groups ran');
+    writeGroups.forEach((g) => {
+      assert(g.recovery && g.recovery.overall, 'write group has a recovery outcome: ' + g.name);
+      eq(g.recovery.healthy, true, 'write group recovery is healthy: ' + g.name);
+    });
+    assert(writeFrames > before, 'the acceptance run sent approved writes');
+
+    // Export integrity: parses, reconciles, and does not leak identifiers or
+    // the authorization token.
+    const parsed = JSON.parse(out.json);
+    eq(parsed.summary.completed,
+      parsed.coverage.executedScenarios + parsed.coverage.skippedScenarios,
+      'summary and coverage reconcile');
+    eq(parsed.groups.reduce((n, g) => n + g.results.length, 0), parsed.summary.completed,
+      'every child result appears in the combined report');
+    // The authorization token is a generation counter, so its numeric value is
+    // not a secret. What matters is that no token field is exported and the
+    // session is represented by an opaque reference.
+    assert(!out.json.includes('"sessionToken"'), 'no sessionToken field is exported');
+    assert(!out.json.includes('"authorizationToken"'), 'no authorizationToken field is exported');
+    assert(/"sessionRef":\s*"sess-[0-9a-f]+"/.test(out.json),
+      'the report identifies the session by an opaque reference');
+    assert(!out.json.includes(FX.syntheticUuid), 'the synthetic UUID is not exported as text');
+    assert(!out.json.includes('00 00 00 00 00 00 40 00 80 00 00 00 00 00 00 aa'),
+      'the synthetic UUID is not exported as raw bytes');
+    const idBaseline = parsed.baseline.registers.filter((r) => /BIKE_ID/.test(r.target));
+    idBaseline.forEach((r) => eq(r.hex, '(masked)', 'identifier baseline bytes are masked'));
+
+    // The full-hardware bench profile must also complete in the same synthetic
+    // session: every write row is covered by its frozen manifest, every touched
+    // target is reconciled, and the Markdown protocol is generated.
+    const hm = await O.prepare('full-hardware');
+    assert(hm.writeRows.length >= 6, 'full-hardware has reviewed write rows: ' + hm.writeRows.length);
+    const hOut = await O.run('full-hardware');
+    const hObj = hOut.object;
+    eq(hObj.summary.recoveryFailed, 0, 'full-hardware leaves no unresolved recovery target');
+    const hResults = hObj.groups.reduce((acc, g) => acc.concat(g.results), []);
+    const uncovered = hResults.filter((r) => /not covered by the approved manifest/.test(r.failureReason || ''));
+    eq(uncovered.length, 0, 'every full-hardware write is covered by the frozen manifest');
+    const hFailed = hResults.filter((r) => r.status === 'failed');
+    eq(hFailed.length, 0, 'no full-hardware scenario fails in the synthetic session: '
+      + hFailed.map((r) => r.id + ':' + (r.failureReason || '')).join('; '));
+    assert(hObj.reconciledRecovery && Array.isArray(hObj.reconciledRecovery.targets),
+      'full-hardware attaches the per-target recovery reconciliation');
+    eq(hObj.reconciledRecovery.unresolvedTargets.length, 0,
+      'full-hardware reconciles every touched target');
+    assert(typeof hObj.markdownReport === 'string' && hObj.markdownReport.length > 0,
+      'full-hardware attaches the Markdown bench protocol');
+    assert(Object.prototype.hasOwnProperty.call(hObj.environment, 'transportKind'),
+      'the report records the transport kind');
+  } finally {
+    FX.restore();
+    W.setExperimental(false);
+    sandbox.Bes3WorkshopDemo.setLatency(0);
+  }
+}, 180000);
+
+// 2. A possibly transmitted write that throws is still tracked as touched.
+await checkAsync('Dev lifecycle: a thrown write is tracked as possibly touched and can be recovered', async () => {
+  requirePrivate(['web/dev/live/live-runner.js']);
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  const { LR } = loadLiveStack();
+  await W.startDemo();
+  W.setExperimental(true);
+  await LR.captureBaseline();
+  LR.register({
+    id: 'test.throw-write', suite: 'Test Harness', name: 'Throw after a possible transmit',
+    requiresConnection: true, requiresWrite: true, timeout: 10000,
+    run: async (ctx) => {
+      const step = {
+        op: 'GENERIC_WRITE', component: 'DriveUnit', name: 'LOW_POWER_PORT_ACTIVE', bytes: '08 00',
+        address: W.util.addrOf('DriveUnit', 'LOW_POWER_PORT_ACTIVE'), typedName: 'LOW_POWER_PORT_ACTIVE',
+        continueOnFailure: true, label: 'throwing write',
+        run: () => { throw new Error('synthetic transport failure'); },
+      };
+      await ctx.runWrite([step]);
+      ctx.setOutcome('inconclusive', 'The write may have been transmitted before the error.');
+    },
+  });
+  const summary = await LR.run('test.throw-write');
+  eq(summary.inconclusive, 1, 'the scenario is inconclusive, not falsely passed');
+  const touched = LR.getTouched();
+  assert(touched.includes('DriveUnit.LOW_POWER_PORT_ACTIVE'),
+    'the target is still tracked as possibly touched: ' + touched.join(','));
+  const rec = await LR.restoreBaseline({ keys: touched, timeoutMs: 5000 });
+  assert(rec.outcomes.length >= 1, 'the touched target has a recovery attempt');
+  assert(['restored-verified', 'already-at-baseline'].includes(rec.outcomes[0].outcome),
+    'the possibly touched target is verified against its baseline: ' + rec.outcomes[0].outcome);
+});
+
+// 3. Stop inside an already-running multi-step plan: no later step runs.
+await checkAsync('Dev lifecycle: a stop inside a multi-step plan prevents the later step', async () => {
+  requirePrivate(['web/dev/live/live-runner.js']);
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  const { LR } = loadLiveStack();
+  await W.startDemo();
+  W.setExperimental(true);
+  await LR.captureBaseline();
+  sandbox.__testSecondStep = false;
+  LR.register({
+    id: 'test.multistep-stop', suite: 'Test Harness', name: 'Stop inside a two-step plan',
+    requiresConnection: true, requiresWrite: true, timeout: 10000,
+    run: async (ctx) => {
+      const first = {
+        op: 'GENERIC_WRITE', component: 'RemoteControl', name: 'LANGUAGE', bytes: '08 01',
+        address: W.util.addrOf('RemoteControl', 'LANGUAGE'), typedName: 'LANGUAGE',
+        continueOnFailure: true, label: 'first step',
+        run: () => { LR.stopAndRecover(); return { applied: false, acked: false, blocked: false }; },
+      };
+      const second = {
+        op: 'GENERIC_WRITE', component: 'RemoteControl', name: 'LANGUAGE', bytes: '08 00',
+        address: W.util.addrOf('RemoteControl', 'LANGUAGE'), typedName: 'LANGUAGE',
+        continueOnFailure: true, label: 'second step',
+        run: () => { sandbox.__testSecondStep = true; return { applied: true, acked: true }; },
+      };
+      try { await ctx.runWrite([first, second]); }
+      catch (e) { ctx.log('plan stopped', { message: e.message }); }
+      ctx.setOutcome('cancelled', 'Stopped inside the plan.');
+    },
+  });
+  const before = writeFrames;
+  const summary = await LR.run('test.multistep-stop');
+  eq(summary.cancelled, 1, 'the scenario is cancelled');
+  eq(sandbox.__testSecondStep, false, 'the second step never ran');
+  eq(writeFrames, before, 'the later step sent no write frame');
+});
+
+// 4. A mutation queued behind a read is cancelled before it can transmit.
+await checkAsync('Dev lifecycle: a mutation queued behind a read is cancelled before transmission', async () => {
+  requirePrivate(['web/dev/live/live-runner.js']);
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  const { LR } = loadLiveStack();
+  await W.startDemo();
+  W.setExperimental(true);
+  await LR.captureBaseline();
+  LR.register({
+    id: 'test.queued-mutation', suite: 'Test Harness', name: 'Wait, then write',
+    requiresConnection: true, requiresWrite: true, timeout: 10000,
+    run: async (ctx) => {
+      const ok = await ctx.wait(500);
+      if (!ok) { ctx.setOutcome('cancelled', 'Stopped during the queued wait.'); return; }
+      await ctx.runWrite([writeStep('RemoteControl', 'LANGUAGE', '08 01')]);
+      ctx.setOutcome('passed', 'The queued write ran.');
+    },
+  });
+  const before = writeFrames;
+  const running = LR.run('test.queued-mutation');
+  await new Promise((r) => setTimeout(r, 50));
+  LR.stopAndRecover();
+  const summary = await running;
+  eq(summary.cancelled, 1, 'the scenario is cancelled');
+  eq(writeFrames, before, 'the queued mutation sent no write frame');
+});
+
+// 5. Recovery is withheld while an in-flight operation may still write, and
+// the unresolved target is reported as unresolved.
+await checkAsync('Dev lifecycle: recovery is withheld while I/O may still be in flight', async () => {
+  requirePrivate(['web/dev/live/live-orchestrator.js']);
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  const { LR, O } = loadLiveStack();
+  await W.startDemo();
+  W.setExperimental(true);
+  LR.register({
+    id: 'test.nonquiescent', suite: 'Test Harness', name: 'Never settles after a write',
+    requiresConnection: true, requiresWrite: true, timeout: 100,
+    resolvePlan: async () => ({ writes: [{ op: 'GENERIC_WRITE', component: 'DriveUnit',
+      name: 'LOW_POWER_PORT_ACTIVE', bytes: '08 00', remaining: 1 }] }),
+    run: async (ctx) => {
+      await ctx.runWrite([writeStep('DriveUnit', 'LOW_POWER_PORT_ACTIVE', '08 00')]);
+      await new Promise(() => {});
+    },
+  });
+  addTestProfile(O, 'test.nonquiescent', [
+    { name: 'Non-quiescent group', filter: (s) => s.id === 'test.nonquiescent' },
+  ]);
+  const m = await O.prepare('test.nonquiescent', { recoveryTimeoutMs: 5000 });
+  const before = writeFrames;
+  const out = await O.run('test.nonquiescent');
+  const g = out.object.groups[0];
+  eq(out.object.groups[0].results[0].quiescent, false,
+    'the result records non-quiescence: ' + JSON.stringify(out.object.groups[0]).slice(0, 600));
+  eq(out.object.groups[0].results[0].status, 'timed-out', 'the result is timed out');
+  eq(g.recovery.overall, 'recovery-not-attempted-nonquiescent',
+    'recovery was withheld');
+  eq(out.object.unresolvedTargets.length >= 1, true, 'the target is reported unresolved');
+  eq(out.object.summary.healthy, false, 'a non-quiescent run is not healthy');
+  eq(out.object.reportIntegrity.finalizedAfterRecovery, true,
+    'the report records that finalisation followed the bounded recovery decision');
+  eq(writeFrames - before, 1, 'only the original write was sent; no recovery write');
+});
+
+// 6. A recovery timeout halts subsequent mutation groups.
+await checkAsync('Dev lifecycle: a recovery timeout halts later mutation groups', async () => {
+  requirePrivate(['web/dev/live/live-orchestrator.js']);
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  const { LR, O } = loadLiveStack();
+  await W.startDemo();
+  W.setExperimental(true);
+  sandbox.__testSecondGroupRan = false;
+  LR.register({
+    id: 'test.timeout-write', suite: 'Test Harness', name: 'Write then slow the transport',
+    requiresConnection: true, requiresWrite: true, timeout: 10000,
+    resolvePlan: async () => ({ writes: [{ op: 'GENERIC_WRITE', component: 'DriveUnit',
+      name: 'LOW_POWER_PORT_ACTIVE', bytes: '08 00', remaining: 1 }] }),
+    run: async (ctx) => {
+      await ctx.runWrite([writeStep('DriveUnit', 'LOW_POWER_PORT_ACTIVE', '08 00')]);
+      sandbox.Bes3WorkshopDemo.setLatency(5000);
+      ctx.setOutcome('passed', 'The write completed; recovery is now slow.');
+    },
+  });
+  LR.register({
+    id: 'test.after-timeout', suite: 'Test Harness', name: 'Later mutation group',
+    requiresConnection: true, requiresWrite: true, timeout: 5000,
+    resolvePlan: async () => ({ writes: [{ op: 'GENERIC_WRITE', component: 'DriveUnit',
+      name: 'LOW_POWER_PORT_ACTIVE', bytes: '08 01', remaining: 1 }] }),
+    run: async (ctx) => {
+      sandbox.__testSecondGroupRan = true;
+      await ctx.runWrite([writeStep('DriveUnit', 'LOW_POWER_PORT_ACTIVE', '08 01')]);
+    },
+  });
+  addTestProfile(O, 'test.recoverytimeout', [
+    { name: 'First mutation', filter: (s) => s.id === 'test.timeout-write' },
+    { name: 'Second mutation', filter: (s) => s.id === 'test.after-timeout' },
+  ]);
+  const m = await O.prepare('test.recoverytimeout', { recoveryTimeoutMs: 50 });
+  const out = await O.run('test.recoverytimeout');
+  eq(out.object.groups[0].recovery && out.object.groups[0].recovery.overall, 'restore-failed',
+    'the recovery is reported as failed after the timeout: '
+      + JSON.stringify(out.object.groups.map((g) => ({ name: g.name, status: g.status,
+        recovery: g.recovery, results: g.results.map((r) => ({ id: r.id, status: r.status })) })))
+        .slice(0, 800));
+  assert(/timed out/i.test(out.object.groups[0].recovery.outcomes[0].reason || ''),
+    'the outcome states that recovery timed out');
+  eq(out.object.groups[1].status, 'not-run', 'the later group is not run');
+  eq(sandbox.__testSecondGroupRan, false, 'the later group sent no write');
+  eq(out.object.halted, true, 'the run halted');
+  eq(out.object.terminationReason, 'completed', 'the run itself completed its bounded work');
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  await sleep(200); // let any orphaned recovery settle before the next check
+});
+
+// 7. Abort during recovery prevents further recovery frames.
+await checkAsync('Dev lifecycle: abort during recovery prevents later recovery frames', async () => {
+  requirePrivate(['web/dev/live/live-runner.js']);
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  const { LR } = loadLiveStack();
+  await W.startDemo();
+  W.setExperimental(true);
+  await LR.captureBaseline();
+  sandbox.Bes3WorkshopDemo.setLatency(100);
+  sandbox.__testAbortRecovery = null;
+  LR.register({
+    id: 'test.abort-recovery', suite: 'Test Harness', name: 'Abort while recovery is running',
+    requiresConnection: true, requiresWrite: true, timeout: 15000,
+    run: async (ctx) => {
+      await ctx.runWrite([writeStep('DriveUnit', 'LOW_POWER_PORT_ACTIVE', '08 00')]);
+      setTimeout(() => LR.abortWrites(), 50);
+      const rec = await LR.restoreBaseline({
+        keys: ['DriveUnit.LOW_POWER_PORT_ACTIVE', 'DriveUnit.HIGH_POWER_PORT_ACTIVE'],
+        timeoutMs: 5000,
+      });
+      sandbox.__testAbortRecovery = rec;
+      ctx.setOutcome('inconclusive', 'The user aborted during recovery.');
+    },
+  });
+  const summary = await LR.run('test.abort-recovery');
+  eq(summary.inconclusive, 1, 'the scenario is inconclusive');
+  const rec = sandbox.__testAbortRecovery;
+  assert(rec, 'the recovery result was captured');
+  eq(rec.outcomes.length, 2, 'both targets are accounted for');
+  eq(rec.outcomes[1].outcome, 'recovery-aborted-by-user',
+    'the second target was not attempted after the abort');
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+});
+
+// 8. A newer setting value after preflight invalidates the stale operation.
+await checkAsync('Dev lifecycle: a newer value after preflight invalidates the stale write', async () => {
+  requirePrivate(['web/dev/live/live-orchestrator.js', 'web/dev/live/live-acceptance-fixture.js']);
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  const { O } = loadLiveStack();
+  const FX = sandbox.BES3DevAcceptanceFixture;
+  FX.activate();
+  try {
+    await W.startDemo();
+    W.setExperimental(true);
+    addTestProfile(O, 'test.stale', [
+      { name: 'Light config', filter: (s) => s.id === 'live.light.config-cycle' },
+    ]);
+    const m = await O.prepare('test.stale');
+    assert(m.writeRows.length >= 1, 'the config write row was approved: '
+      + m.writeRows.length + ' row(s), scenarios=' + m.scenarioIds.join(','));
+    // The approved row targets the opposite of the current startup mode. Change
+    // the mode to the approved value after approval, so execution now needs the
+    // other value, which the frozen manifest never approved.
+    const approved = m.writeRows[0];
+    const approvedVal = approved.bytes === '08 01' ? 1 : 2;
+    await W.Writers.lightConfiguration(approvedVal);
+    const before = writeFrames;
+    const out = await O.run('test.stale');
+    const result = out.object.groups[0].results[0];
+    eq(result.status, 'inconclusive', 'the stale operation is inconclusive');
+    assert(/not covered by the approved manifest/.test(result.failureReason || ''),
+      'the reason states that the step is not covered by the manifest: ' + result.failureReason);
+    // The stale config write is refused before transmission. The one remaining
+    // frame is the verified recovery of the value that changed after approval;
+    // it is not the stale operation.
+    eq(writeFrames - before, 1, 'only the verified recovery frame was sent');
+    eq(result.recoveryOutcome, 'restored-verified', 'the target was restored after the refusal');
+  } finally {
+    FX.restore();
+  }
+});
+
+// 9. A reconnect never revives an old manifest.
+await checkAsync('Dev lifecycle: a reconnect invalidates the approved manifest', async () => {
+  requirePrivate(['web/dev/live/live-orchestrator.js']);
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  const { O } = loadLiveStack();
+  await W.startDemo();
+  W.setExperimental(true);
+  const m = await O.prepare('fast-demo');
+  await W.startDemo(); // a new demo session: new authorization generation
+  const before = writeFrames;
+  let err = null;
+  try { await O.run('fast-demo'); } catch (e) { err = e; }
+  assert(err, 'the run is refused after the reconnect');
+  assert(/session or authorization changed/.test(err.message),
+    'the refusal names the session change: ' + err.message);
+  eq(writeFrames, before, 'the old manifest sent no frame');
+  eq(O.getLast(), null, 'no report is produced for the stale manifest');
+});
+
+// 10. Maximum duration does not prevent bounded recovery of the group that
+// already started.
+await checkAsync('Dev lifecycle: maximum duration does not prevent bounded recovery', async () => {
+  requirePrivate(['web/dev/live/live-orchestrator.js']);
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  const { LR, O } = loadLiveStack();
+  await W.startDemo();
+  W.setExperimental(true);
+  LR.register({
+    id: 'test.duration-write', suite: 'Test Harness', name: 'Write then wait',
+    requiresConnection: true, requiresWrite: true, timeout: 10000,
+    resolvePlan: async () => ({ writes: [{ op: 'GENERIC_WRITE', component: 'RemoteControl',
+      name: 'LANGUAGE', bytes: '08 00', remaining: 1 }] }),
+    run: async (ctx) => {
+      await ctx.runWrite([writeStep('RemoteControl', 'LANGUAGE', '08 00')]);
+      await ctx.wait(1500);
+      ctx.setOutcome('passed', 'The write and wait completed.');
+    },
+  });
+  LR.register({
+    id: 'test.duration-second', suite: 'Test Harness', name: 'Second group',
+    requiresConnection: true, requiresWrite: false, timeout: 5000,
+    run: async (ctx) => { ctx.ok(true, 'second group ran'); },
+  });
+  addTestProfile(O, 'test.duration', [
+    { name: 'First mutation', filter: (s) => s.id === 'test.duration-write' },
+    { name: 'Second read', filter: (s) => s.id === 'test.duration-second' },
+  ]);
+  const m = await O.prepare('test.duration', { maxDurationMs: 1000 });
+  eq(m.maxDurationMs, 1000, 'the approved maximum duration is 1000 ms');
+  const t0 = Date.now();
+  const out = await O.run('test.duration');
+  const elapsed = Date.now() - t0;
+  eq(out.object.groups[0].recovery.healthy, true,
+    'the started group still recovered after the duration expired');
+  eq(out.object.groups[1].status, 'not-run', 'the later group is halted: '
+    + JSON.stringify(out.object.groups.map((g) => ({ name: g.name, status: g.status })))
+    + ' elapsed=' + elapsed + ' max=' + m.maxDurationMs);
+  eq(out.object.halted, true, 'the duration halt is recorded');
+  eq(out.object.terminationReason, 'timeout', 'the halt reason is the duration limit');
+});
+
+// 11. Report integrity and download policy are machine-readable.
+await checkAsync('Dev report integrity: one auto-download, manual download and sensitive raw trace', async () => {
+  requirePrivate(['web/dev/live/live-orchestrator.js']);
+  const { O } = loadLiveStack();
+  await W.startDemo();
+  W.setExperimental(false);
+  await O.prepare('fast-demo');
+  const out = await O.run('fast-demo');
+  assert(out, 'a combined report exists');
+  eq(O._claimDownload('auto'), true, 'the first automatic download is allowed');
+  eq(O._claimDownload('auto'), false, 'a second automatic download for the same run is refused');
+  eq(O._claimDownload('manual'), true, 'manual download remains available');
+  const parsed = JSON.parse(out.json);
+  eq(parsed.summary.completed,
+    parsed.coverage.executedScenarios + parsed.coverage.skippedScenarios,
+    'the parsed report reconciles');
+  eq(parsed.reportIntegrity.allResultsIncluded, true, 'all results are included');
+  const LOG = sandbox.BES3DevLogger;
+  const log = LOG.createRunLog('integrity-test', '0.0.0');
+  assert(/"sensitive": true/.test(LOG.exportJson(log)), 'raw JSON trace is marked sensitive');
+  assert(/SENSITIVE: raw trace export/.test(LOG.exportText(log)),
+    'raw text trace is marked sensitive');
+});
+
+// 12. Coverage accounting: a preflight skip is a skipped row, and a row that was
+// never scheduled in a partially finished group is counted as not run.
+await checkAsync('Dev coverage: skipped rows and unscheduled rows are counted separately', async () => {
+  requirePrivate(['web/dev/live/live-orchestrator.js']);
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  const { LR, O } = loadLiveStack();
+  await W.startDemo();
+  W.setExperimental(true);
+  sandbox.__testUnscheduledRan = false;
+  LR.register({
+    id: 'test.coverage.preflight-skip', suite: 'Test Harness', name: 'Preflight skip',
+    requiresConnection: true, requiresWrite: true, timeout: 5000,
+    resolvePlan: async () => ({ skipped: 'the synthetic target has no writable payload' }),
+    run: async () => { throw new Error('a preflight-skipped scenario must not run'); },
+  });
+  LR.register({
+    id: 'test.coverage.timeout', suite: 'Test Harness', name: 'Never settles',
+    requiresConnection: true, requiresWrite: true, timeout: 100,
+    resolvePlan: async () => ({ writes: [{ op: 'GENERIC_WRITE', component: 'RemoteControl',
+      name: 'LANGUAGE', bytes: '08 00', remaining: 1 }] }),
+    run: async (ctx) => {
+      await ctx.runWrite([writeStep('RemoteControl', 'LANGUAGE', '08 00')]);
+      await new Promise(() => {});
+    },
+  });
+  LR.register({
+    id: 'test.coverage.unscheduled', suite: 'Test Harness', name: 'Never scheduled',
+    requiresConnection: true, requiresWrite: false, timeout: 5000,
+    run: async () => { sandbox.__testUnscheduledRan = true; },
+  });
+  addTestProfile(O, 'test.coverage', [
+    { name: 'Skipped write', filter: (s) => s.id === 'test.coverage.preflight-skip' },
+    { name: 'Partial group', filter: (s) =>
+      s.id === 'test.coverage.timeout' || s.id === 'test.coverage.unscheduled' },
+  ]);
+  const m = await O.prepare('test.coverage', { recoveryTimeoutMs: 5000 });
+  eq(m.scenarioIds.length, 3, 'three scenarios were requested');
+  eq(m.skippedWrites.length, 1, 'the preflight skip is recorded before approval');
+
+  const out = await O.run('test.coverage');
+  const c = out.object.coverage;
+  eq(c.requestedScenarios, 3, 'all three scenarios are requested');
+  eq(c.eligibleScenarios, 2, 'the preflight skip is not eligible');
+  eq(c.executedScenarios, 1, 'only the settled scenario was executed');
+  eq(c.skippedScenarios, 1, 'the preflight skip is a skipped row');
+  eq(c.skippedScenarioIds.join(','), 'test.coverage.preflight-skip',
+    'the skipped row is identified by id');
+  eq(c.notRunScenarios, 1, 'the unscheduled row in the partial group is counted');
+  eq(c.notRunScenarioIds.join(','), 'test.coverage.unscheduled',
+    'the unscheduled row is identified by id');
+  const partial = c.groupDetails.filter((g) => g.name === 'Partial group')[0];
+  eq(partial.status, 'ran', 'the partial group is not reported as not-run');
+  eq(partial.executed, 1, 'the partial group counts the row that ran');
+  eq(partial.notRun, 1, 'the partial group counts its unscheduled row');
+  eq(out.object.summary.notRun, 1, 'the summary counts the unscheduled row');
+  eq(out.object.summary.completed, 2, 'the summary counts the skipped and executed rows');
+  eq(out.object.reportIntegrity.allResultsIncluded, false,
+    'a partially finished report never claims full coverage');
+  eq(sandbox.__testUnscheduledRan, false, 'the unscheduled scenario did not run');
+  sandbox.Bes3WorkshopDemo.setLatency(0);
+  await sleep(200); // let any orphaned timeout settle before the next check
+});
+
+// 12b. A disconnected session cannot be prepared as a live run: the offline
+// panel is the only offline runner, so no report can claim offline coverage.
+await checkAsync('Dev orchestration: prepare refuses a disconnected session', async () => {
+  requirePrivate(['web/dev/live/live-orchestrator.js']);
+  const { O } = loadLiveStack();
+  await W.disconnect();
+  eq(W.sessionMode, 'file', 'no session is connected');
+  let err = null;
+  try { await O.prepare('fast-demo'); } catch (e) { err = e; }
+  assert(err, 'the disconnected prepare is refused');
+  assert(/connected bike or Demo session/.test(err.message),
+    'the refusal names the missing session: ' + err.message);
+  eq(O.isPrepared(), false, 'no manifest is prepared');
+});
+
+// 13. The live generic negative case is policy-only. It must not reach the
+// writer; the writer boundary is exercised separately below.
+await checkAsync('Dev live suite: the generic negative case is policy-only and sends no frame', async () => {
+  requirePrivate(['web/dev/live/live-suite-generic.js']);
+  const { LR } = loadLiveStack();
+  await W.startDemo();
+  W.setExperimental(true);
+  const before = writeFrames;
+  const summary = await LR.run('live.generic.negative-authorization');
+  eq(summary.passed, 1, 'the policy-only case passes: ' + JSON.stringify(summary));
+  eq(writeFrames, before, 'the policy-only case sends no WRITE frame');
+  eq(POLICY.validateHexPayload('ab'.repeat(65)).ok, false,
+    'the policy rejects a 65-byte payload');
+  eq(POLICY.validateHexPayload('ab'.repeat(64)).ok, true,
+    'the policy accepts a 64-byte payload');
+});
+
+// 14. The writer boundary is tested with the harness transport as a synthetic
+// adapter: it records dispatches, so a zero count is evidence only because the
+// same adapter observes a dispatch for an allowed write.
+await checkAsync('Dev writer boundary: synthetic adapter observes one dispatch for an allowed write and zero for blocked targets', async () => {
+  await W.startDemo();
+  W.setExperimental(true);
+  const beforeAllowed = writeFrames;
+  const allowedStep = {
+    label: 'allowed', bytes: '08 01', op: 'LIGHT_SWITCH', component: 'DriveUnit', name: 'BIKE_LIGHT',
+    address: W.util.addrOf('DriveUnit', 'BIKE_LIGHT'),
+    run: (owner) => W.Writers.lightSwitch(true, owner),
+  };
+  const allowed = await W.runPlan([allowedStep], null, { requireApproval: true, approve: async () => true });
+  eq(allowed.length, 1, 'the allowed write produced one result');
+  eq(writeFrames - beforeAllowed, 1, 'the synthetic adapter observes exactly one dispatch');
+  for (const [c, n] of [['DriveUnit', 'BIKE_LIGHT_POWER'], ['DriveUnit', 'NOT_A_REGISTER']]) {
+    const before = writeFrames;
+    const err = await capture(() => W.Writers.generic(c, n, [0x08, 0x01]));
+    assert(err && err.code === 'WRITE_BLOCKED', c + '.' + n + ' is refused at the writer boundary');
+    eq(writeFrames, before, c + '.' + n + ' -> the synthetic adapter observed zero dispatch');
+  }
+});
+
+// 15. The ID dry-check no longer asserts an unmeasured zero-frame claim. The
+// UUID codec and the registry-readonly policy checks remain.
+await checkAsync('Dev live suite: the ID dry-check keeps the codec and policy checks only', async () => {
+  requirePrivate(['web/dev/live/live-suite-id.js']);
+  const { LR } = loadLiveStack();
+  await W.startDemo();
+  W.setExperimental(true);
+  const src = readFileSync(path.join(repo, 'web', 'dev', 'live', 'live-suite-id.js'), 'utf8');
+  assert(!src.includes('no-id-write'), 'the unconditional no-id-write check is removed');
+  const before = writeFrames;
+  const summary = await LR.run('live.id.sync-dry-check');
+  eq(summary.passed, 1, 'the dry-check passes: ' + JSON.stringify(summary));
+  eq(writeFrames, before, 'the dry-check sends no WRITE frame');
+  const state = LR.getState();
+  const result = state.results[state.results.length - 1];
+  eq(result.checks.some((c) => c.label === 'no-id-write'), false,
+    'no unconditional zero-frame check is recorded');
+  eq(result.assertCount, 4, 'only the two policy and two codec assertions remain');
+});
+
+// ── Dev / Diagnostics distribution checks ──────────────────────────────────
+// These checks verify that the private Dev workbench is correctly configured
+// for exclusion from the public release tree, and that the production entry
+// page remains unaffected. Checks that depend on private files use
+// requirePrivate(): they are explicitly skipped in the public tree and fail in
+// a private checkout when a required file is missing.
+
+check('Dev distribution: required exclusion entries in public-exclude.txt', () => {
+  const excl = readFileSync(path.join(repo, 'tools', 'public-exclude.txt'), 'utf8');
+  const lines = excl.split(/\r?\n/).map(l => l.replace(/#.*$/, '').trim()).filter(Boolean);
+  assert(lines.includes('dev.html'),  'dev.html must be listed in public-exclude.txt');
+  assert(lines.includes('web/dev/'),  'web/dev/ must be listed in public-exclude.txt');
+  assert(lines.includes('docs/dev/'), 'docs/dev/ must be listed in public-exclude.txt');
+});
+
+check('Dev distribution: production entry page has no dev script references', () => {
+  const html = readFileSync(path.join(repo, 'index.html'), 'utf8');
+  assert(!html.includes('web/dev/'),   'index.html must not reference web/dev/');
+  assert(!html.includes('dev-runner'), 'index.html must not reference dev-runner');
+  assert(!html.includes('BES3Dev'),    'index.html must not reference BES3Dev namespace');
+});
+
+check('Dev distribution: dev-runner uses private namespace, not production namespaces (source)', () => {
+  const devRunnerPath = path.join(repo, 'web', 'dev', 'dev-runner.js');
+  requirePrivate(['web/dev/dev-runner.js']);
+  const src = readFileSync(devRunnerPath, 'utf8');
+  assert(!src.includes('window.Bes3Workshop ='), 'dev-runner must not define window.Bes3Workshop');
+  assert(!src.includes('window.Bes3Protocol ='), 'dev-runner must not define window.Bes3Protocol');
+  assert(src.includes('window.BES3DevRunner'),   'dev-runner must expose window.BES3DevRunner');
+});
+
+check('Dev distribution: dev-ui uses textContent for dynamic data rendering (source)', () => {
+  const devUiPath = path.join(repo, 'web', 'dev', 'dev-ui.js');
+  requirePrivate(['web/dev/dev-ui.js']);
+  const src = readFileSync(devUiPath, 'utf8');
+  assert(src.includes('textContent'),   'dev-ui.js must use textContent for dynamic data');
+  assert(src.includes('BES3DevRunner'), 'dev-ui.js must reference BES3DevRunner');
+  assert(src.includes('BES3DevLogger'), 'dev-ui.js must reference BES3DevLogger');
+});
+
+check('Dev distribution: dev-ui counts a timed-out scenario only once in the offline summary (source)', () => {
+  const devUiPath = path.join(repo, 'web', 'dev', 'dev-ui.js');
+  requirePrivate(['web/dev/dev-ui.js']);
+  const src = readFileSync(devUiPath, 'utf8');
+  // A timed-out scenario is not a failure: the summary counts it in timedOut
+  // only. This is a source-level guard, not a runtime UI test.
+  assert(/else if \(r\.status === 'timed-out'\)\s*counts\.timedOut\+\+;/.test(src),
+    'timed-out increments only the timedOut counter');
+  assert(!/timed-out'\)\s*\{[^}]*counts\.failed\+\+/.test(src),
+    'timed-out is never also counted as failed');
+});
+
+check('Dev distribution: dev.html contains private warning and does not appear in production page (source)', () => {
+  const devHtmlPath = path.join(repo, 'dev.html');
+  requirePrivate(['dev.html']);
+  const src = readFileSync(devHtmlPath, 'utf8');
+  assert(src.includes('PRIVATE'), 'dev.html must contain a PRIVATE warning');
+  assert(src.includes('dev-runner.js') || src.includes('BES3DevRunner'),
+    'dev.html must reference the dev runner');
+  for (const script of ['live-evidence.js', 'live-suite-settings.js',
+    'live-suite-diagnostics.js', 'live-suite-sweep.js']) {
+    assert(src.includes(script), 'dev.html must load ' + script);
+  }
+  assert(src.includes('dev-auto-approve'), 'dev.html must expose the bench auto-approve control');
+  assert(src.includes('dev-export-md'), 'dev.html must expose the Markdown protocol download');
+  // The evidence helper must load before the suites that classify read-backs.
+  assert(src.indexOf('live-evidence.js') < src.indexOf('live-suite-ports.js'),
+    'live-evidence.js must load before live-suite-ports.js');
+  // Cross-check: production page must not reference dev.html
+  const indexSrc = readFileSync(path.join(repo, 'index.html'), 'utf8');
+  assert(!indexSrc.includes('dev.html'), 'production index.html must not reference dev.html');
+});
+
+check('Dev distribution: live runner file present in private tree (source)', () => {
+  const liveDir = path.join(repo, 'web', 'dev', 'live');
+  requirePrivate(['web/dev/live/live-runner.js']);
+  assert(existsSync(path.join(liveDir, 'live-runner.js')),            'web/dev/live/live-runner.js must exist');
+  assert(existsSync(path.join(liveDir, 'live-ui.js')),                'web/dev/live/live-ui.js must exist');
+  assert(existsSync(path.join(liveDir, 'live-runner-selftests.js')),  'web/dev/live/live-runner-selftests.js must exist');
+  assert(existsSync(path.join(liveDir, 'live-write-helpers.js')),     'web/dev/live/live-write-helpers.js must exist');
+  const helpSrc = readFileSync(path.join(liveDir, 'live-write-helpers.js'), 'utf8');
+  assert(helpSrc.includes('window.BES3DevWriteHelpers'),              'live-write-helpers.js must expose BES3DevWriteHelpers');
+  assert(helpSrc.includes('classifyWrite'),                           'live-write-helpers.js must define classifyWrite');
+  assert(helpSrc.includes('evaluateVerdicts'),                        'live-write-helpers.js must define evaluateVerdicts');
+  assert(helpSrc.includes('triageInconclusive'),                      'live-write-helpers.js must define triageInconclusive');
+  assert(helpSrc.includes('classifyStability'),                       'live-write-helpers.js must define classifyStability');
+  const src = readFileSync(path.join(liveDir, 'live-runner.js'), 'utf8');
+  assert(src.includes('window.BES3DevLiveRunner'), 'live-runner.js must expose BES3DevLiveRunner');
+  assert(!src.includes('window.Bes3Workshop ='), 'live-runner.js must not redefine window.Bes3Workshop');
+});
+
+check('Dev distribution: all expected Phase 3 scenario files present in private tree (source)', () => {
+  const scenDir = path.join(repo, 'web', 'dev', 'scenarios');
+  requirePrivate(['web/dev/scenarios/protocol.js']);
+  const expected = [
+    'protocol.js', 'session.js', 'writes.js', 'runner-self-tests.js',
+    'transports.js', 'import-privacy.js', 'config-policy.js', 'ui-report.js',
+  ];
+  for (const f of expected) {
+    assert(existsSync(path.join(scenDir, f)), 'expected scenario file missing: web/dev/scenarios/' + f);
+  }
+});
+
+// ── Dev live evidence model (pure helpers, no transport) ───────────────────
+
+function loadLiveHelpers() {
+  const p = path.join(repo, 'web', 'dev', 'live', 'live-write-helpers.js');
+  requirePrivate(['web/dev/live/live-write-helpers.js']);
+  const w = {};
+  const src = readFileSync(p, 'utf8');
+  new Function('window', 'performance', src)(w, performance);
+  assert(w.BES3DevWriteHelpers, 'live-write-helpers.js did not expose BES3DevWriteHelpers');
+  return w.BES3DevWriteHelpers;
+}
+
+check('Dev live helpers: empty, explicit off, explicit on and unavailable stay distinct', () => {
+  const H = loadLiveHelpers();
+  if (!H) return;
+  eq(H.readState({ status: 'ok', hex: '08 01' }), 'explicit-on', '08 01');
+  eq(H.readState({ status: 'ok', hex: '08 00' }), 'explicit-off', '08 00');
+  eq(H.readState({ status: 'ok', hex: '' }), 'empty', 'empty payload');
+  eq(H.readState({ status: 'declined', hex: '' }), 'unavailable', 'declined read');
+  eq(H.readHex({ status: 'ok', hex: '' }), '', 'successful empty has hex ""');
+  eq(H.readHex({ status: 'declined', hex: '' }), null, 'unavailable has no usable hex');
+  assert(H.readState({ status: 'ok', hex: '' }) !== 'explicit-off', 'empty is never off');
+});
+
+check('Dev live helpers: classifyWrite keeps ACK, read-back and empty distinct', () => {
+  const H = loadLiveHelpers();
+  if (!H) return;
+  const passed = H.classifyWrite({ acked: true, applied: true }, { status: 'ok', hex: '08 01' }, '08 01');
+  eq(passed.cls, 'passed', 'applied + matching read-back');
+  eq(passed.acked, true, 'ack preserved');
+
+  const appliedNoAck = H.classifyWrite({ acked: false, applied: true }, { status: 'ok', hex: '08 01' }, '08 01');
+  eq(appliedNoAck.cls, 'passed', 'read-back can pass without an ACK');
+  eq(appliedNoAck.sub, 'applied-without-ack', 'missing ACK is recorded');
+
+  const empty = H.classifyWrite({ acked: true, applied: false }, { status: 'ok', hex: '' }, '08 00');
+  eq(empty.cls, 'inconclusive', 'empty read-back is inconclusive');
+  eq(empty.sub, 'empty-read-back', 'empty sub-class');
+  eq(empty.afterState, 'empty', 'empty is recorded as empty');
+
+  const mismatch = H.classifyWrite({ acked: true, applied: false }, { status: 'ok', hex: '08 01' }, '08 00');
+  eq(mismatch.cls, 'failed', 'known byte mismatch is failed');
+  eq(mismatch.sub, 'byte-mismatch', 'mismatch sub-class');
+
+  const noAck = H.classifyWrite({ acked: false, applied: false }, { status: 'ok', hex: '08 01' }, '08 01');
+  eq(noAck.cls, 'failed', 'no ACK and no read-back match is failed');
+
+  const noRead = H.classifyWrite({ acked: true, applied: false }, { status: 'no-response', hex: '' }, '08 01');
+  eq(noRead.cls, 'inconclusive', 'ACK without a read-back is inconclusive');
+  eq(noRead.applied, false, 'never applied without a read-back');
+});
+
+check('Dev live helpers: stability is separate from completeness and one sample is not stability', () => {
+  const H = loadLiveHelpers();
+  if (!H) return;
+  const empty = H.classifyStability([{ status: 'ok', hex: '' }, { status: 'ok', hex: '' }]);
+  eq(empty.stability, 'stable-empty', 'all-empty');
+  eq(empty.complete, true, 'complete series');
+  eq(empty.refinedSubClass, undefined, 'no refined sub-class');
+
+  const nonempty = H.classifyStability([{ status: 'ok', hex: '08 01' }, { status: 'ok', hex: '08 01' }]);
+  eq(nonempty.stability, 'stable-nonempty', 'same non-empty');
+
+  const changed = H.classifyStability([{ status: 'ok', hex: '' }, { status: 'ok', hex: '08 00' }]);
+  eq(changed.stability, 'changed', 'disagreeing reads');
+
+  const single = H.classifyStability([{ status: 'ok', hex: '08 00' }]);
+  eq(single.stability, 'single-sample', 'one sample cannot establish stability');
+
+  const none = H.classifyStability([{ status: 'declined', hex: null }]);
+  eq(none.stability, 'unavailable', 'no successful sample');
+  eq(none.complete, false, 'incomplete series');
+});
+
+check('Dev live helpers: evaluateVerdicts is non-throwing and never passes an all-no-op set', () => {
+  const H = loadLiveHelpers();
+  if (!H) return;
+  const ctx = {
+    checks: [],
+    outcome: null,
+    check(label, ok, detail) { this.checks.push({ label: label, ok: ok, detail: detail }); },
+    setOutcome(functional, reason) { this.outcome = { functional: functional, reason: reason }; },
+  };
+  H.evaluateVerdicts(ctx, { enable: { cls: 'no-op' }, disable: { cls: 'no-op' } });
+  eq(ctx.outcome.functional, 'inconclusive', 'all-no-op is inconclusive');
+  eq(ctx.checks.length, 2, 'one check per verdict');
+
+  const ctx2 = {
+    checks: [], outcome: null,
+    check(label, ok) { this.checks.push({ label: label, ok: ok }); },
+    setOutcome(functional, reason) { this.outcome = { functional: functional, reason: reason }; },
+  };
+  H.evaluateVerdicts(ctx2, { enable: { cls: 'passed' }, disable: { cls: 'failed', reason: 'mismatch' } });
+  eq(ctx2.outcome.functional, 'failed', 'a failed verdict wins');
+});
+
+check('Dev live orchestrator: manifest is immutable, ordered and excludes self-tests', () => {
+  const orchPath = path.join(repo, 'web', 'dev', 'live', 'live-orchestrator.js');
+  requirePrivate(['web/dev/live/live-orchestrator.js']);
+  const registry = [
+    { id: 'a', suite: 'Read/Diagnostics', requiresWrite: false },
+    { id: 'b', suite: 'Bike Light', requiresWrite: true, registerSummary: 'x' },
+    { id: 'c', suite: 'Live Self-Tests', requiresWrite: false },
+    { id: 'd', suite: 'Read/Diagnostics', requiresWrite: false },
+  ];
+  const w = { BES3DevLiveRunner: { registry: registry } };
+  const src = readFileSync(path.join(repo, 'web', 'dev', 'live', 'live-orchestrator.js'), 'utf8');
+  new Function('window', src)(w);
+  const O = w.BES3DevOrchestrator;
+  assert(O, 'orchestrator did not expose BES3DevOrchestrator');
+
+  const m = O.buildManifest('fast-demo');
+  assert(Object.isFrozen(m), 'manifest is frozen');
+  assert(Object.isFrozen(m.groups), 'groups are frozen');
+  assert(Object.isFrozen(m.scenarioIds), 'scenarioIds are frozen');
+  assert(m.groups.every((g) => Object.isFrozen(g) && Object.isFrozen(g.scenarioIds)),
+    'each group and its ids are frozen');
+  eq(m.scenarioIds.join(','), 'a,d', 'fast-demo is read-only and ordered');
+  assert(m.scenarioIds.indexOf('c') === -1, 'self-tests are excluded');
+  eq(m.requiresWrite, false, 'fast-demo requires no write');
+
+  const ext = O.buildManifest('extended');
+  eq(ext.scenarioIds.join(','), 'a,d,b', 'extended includes the write scenario once');
+  eq(ext.requiresWrite, true, 'extended requires write opt-in');
+
+  assert(O.PROFILES['full-hardware'], 'the full-hardware bench profile is defined');
+  eq(O.PROFILES['full-hardware'].groups.map((g) => g.name).join('|'),
+    'ReadDiagnostics|Diagnostics|Bike Light|Service Interval|Power Ports|General Settings|ID System ID|Write Lab Generic|Hardware Sweep',
+    'full-hardware groups are defined in the reviewed order');
+  const fh = O.buildManifest('full-hardware');
+  eq(fh.scenarioIds.join(','), 'a,d',
+    'full-hardware uses explicit light/port ids and does not over-match');
+});
+
+check('Dev live runner: recovery statuses and stop/abort controls are present (source)', () => {
+  const runnerPath = path.join(repo, 'web', 'dev', 'live', 'live-runner.js');
+  requirePrivate(['web/dev/live/live-runner.js']);
+  const src = readFileSync(runnerPath, 'utf8');
+  for (const token of [
+    'already-at-baseline', 'restored-verified', 'restore-unconfirmed', 'restore-failed',
+    'recovery-not-attempted-session-lost', 'recovery-not-supported', 'recovery-aborted-by-user',
+    'stopAndRecover', 'abortWrites', 'sessionStillCurrent', 'restorable',
+  ]) {
+    assert(src.includes(token), 'live-runner.js must contain ' + token);
+  }
+  const help = readFileSync(path.join(repo, 'web', 'dev', 'live', 'live-write-helpers.js'), 'utf8');
+  for (const token of ['empty-read-back', 'stable-empty', 'stable-nonempty', 'single-sample', 'unavailable']) {
+    assert(help.includes(token), 'live-write-helpers.js must contain ' + token);
+  }
+});
+
 // The safety document presents the suite count as evidence. It must quote the
 // final run, not a historical one. This check is deliberately last: `passed`
 // already contains every prior check, and this check makes the documented count
 // one higher.
+check('Dev distribution: private checkout contains every required Dev asset', () => {
+  requirePrivate([
+    'dev.html',
+    'web/dev/dev-runner.js',
+    'web/dev/dev-ui.js',
+    'web/dev/dev-logger.js',
+    'web/dev/live/live-runner.js',
+    'web/dev/live/live-orchestrator.js',
+    'web/dev/live/live-acceptance-fixture.js',
+    'web/dev/live/live-write-helpers.js',
+    'web/dev/live/live-evidence.js',
+    'web/dev/live/live-ui.js',
+    'web/dev/live/live-suite-read.js',
+    'web/dev/live/live-suite-light.js',
+    'web/dev/live/live-suite-service.js',
+    'web/dev/live/live-suite-ports.js',
+    'web/dev/live/live-suite-id.js',
+    'web/dev/live/live-suite-writelab.js',
+    'web/dev/live/live-suite-generic.js',
+    'web/dev/live/live-suite-settings.js',
+    'web/dev/live/live-suite-diagnostics.js',
+    'web/dev/live/live-suite-sweep.js',
+  ]);
+});
+
+// Keep this check last: it quotes the final suite total, and in a public tree
+// the private-only checks are skipped rather than passed.
 check('docs: workshop-write-safety quotes the current suite count', () => {
   const doc = readFileSync(path.join(repo, 'docs', 'workshop-write-safety.md'), 'utf8');
   const m = doc.match(/\*\*(\d+) passed, 0 failed/);
   assert(m, 'the safety document quotes a passed count');
-  eq(Number(m[1]), passed + 1, 'the documented count matches this run');
+  // The quoted number is the private suite total. In a public tree the
+  // private-only checks are reported as skipped, not passed, so the total is
+  // passed + skipped + this check.
+  eq(Number(m[1]), passed + skipped + 1, 'the documented count matches this run');
 });
 
 console.log('');
-console.log(passed + ' passed, ' + failed + ' failed');
+console.log(passed + ' passed, ' + failed + ' failed, ' + skipped + ' skipped');
+if (skipped) {
+  console.log('');
+  for (const s of skipReasons) console.log('  - skip ' + s.name + ': ' + s.reason);
+}
 if (failed) {
   console.log('');
   for (const f of failures) console.log('  - ' + f.name + ': ' + f.message);

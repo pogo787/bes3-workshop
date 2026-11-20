@@ -4,7 +4,7 @@ Generated from `src/address-registry.json` (registryVersion 1.0.0) — do not ed
 
 License: **CC-BY-4.0** — attribution required (Bosch BES3 address registry — github.com/rweijnen/bosch-bes3-reader). See `LICENSE-DATA`.
 
-Total: 895 addresses across 10 components. 145 confirmed against real captured data; 378 have a confirmed decode kind.
+Total: 895 addresses across 10 components. 150 confirmed against real captured data; 380 have a confirmed decode kind.
 
 ## Contents
 
@@ -424,7 +424,7 @@ Total: 895 addresses across 10 components. 145 confirmed against real captured d
 | 0x1816 | `MAXIMUM_GEAR_RATIO` | Maximum Gear Ratio | normFactor | R |  |  |
 | 0x1817 | `MAXIMUM_ASSISTANCE_SPEED` | Maximum Assistance Speed | normFactor | R |  |  |
 | 0x1818 | `ODOMETER` | Odometer | uint | R |  | inferred |
-| 0x1819 | `POWER_ON_TIME` | Power-On Time | uint | R |  | inferred |
+| 0x1819 | `POWER_ON_TIME` | Power-On Time | uint | R | ✓ | inferred |
 | 0x181a | `BIKE_NOT_DRIVING` | Bike detected as not driving (motor cut-off state) | bool | R | ✓ | Flow decompile |
 | 0x181b | `ALWAYS_SHOW_BIKE_SPEED_IN_DISPLAY` | Always Show Bike Speed In Display | unknown | R |  |  |
 | 0x181c | `BIKE_LIGHT` | Bike Light | bool | RW |  |  |
@@ -433,7 +433,7 @@ Total: 895 addresses across 10 components. 145 confirmed against real captured d
 | 0x181f | `BIKE_LIGHT_CONFIGURATION_OEM` | Bike Light Configuration Oem | unknown | R |  |  |
 | 0x1820 | `BIKE_LIGHT_AVAILABLE` | Bike Light Available | bool | RW |  |  |
 | 0x1821 | `BIKE_LIGHT_CONFIGURATION` | Bike Light Configuration | unknown | RW |  |  |
-| 0x1822 | `BIKE_LIGHT_POWER` | Bike Light Power | unknown | RW |  |  |
+| 0x1822 | `BIKE_LIGHT_POWER` | Bike Light Power | unknown | RW | ✓ |  |
 | 0x1823 | `START_ASSIST_MODE_CONFIGURATION_OEM` | Start Assist Mode (OEM default) | startAssistModeOem | R |  |  |
 | 0x1824 | `START_ASSIST_MODE_CONFIGURATION` | Start Assist Mode | enum | RW |  |  |
 | 0x1825 | `WALK_ASSIST_CONFIGURATION_OEM` | Walk Assist Configuration Oem | unknown | R |  |  |
@@ -448,8 +448,8 @@ Total: 895 addresses across 10 components. 145 confirmed against real captured d
 | 0x182e | `PRODUCT_NAME` | Product Name | string | R |  |  |
 | 0x182f | `REAR_WHEEL_CIRCUMFERENCE_USER_LIMITS` | Rear Wheel Circumference User Limits | unknown | R |  |  |
 | 0x1830 | `OEM_PORT_CONFIGURATION` | Oem Port Configuration | unknown | R |  |  |
-| 0x1831 | `LOW_POWER_PORT_ACTIVE` | Low Power Port Active | unknown | RW |  |  |
-| 0x1832 | `HIGH_POWER_PORT_ACTIVE` | High Power Port Active | unknown | RW |  |  |
+| 0x1831 | `LOW_POWER_PORT_ACTIVE` | Low Power Port Active | bool | RW | ✓ |  |
+| 0x1832 | `HIGH_POWER_PORT_ACTIVE` | High Power Port Active | bool | RW | ✓ |  |
 | 0x1833 | `BATTERY_KEY_LOCK_NUMBER` | Battery Key Lock Number | unknown | RW |  |  |
 | 0x1834 | `COMPONENT_LOCKED` | Component Locked | bool | R |  |  |
 | 0x1835 | `COMPONENT_LOCK_CONFIGURATION` | Component Lock Configuration | unknown | R |  |  |
@@ -507,7 +507,7 @@ Total: 895 addresses across 10 components. 145 confirmed against real captured d
 | 0x186a | `WALK_ASSIST_STATUS` | Walk-assist / hill-start status | submessage | R |  |  |
 | 0x186b | `WALK_ASSIST_CONTROL` | Walk Assist Control | unknown | R |  |  |
 | 0x186c | `OEM_BRAND_NAME` | OEM Brand Name | string | R |  |  |
-| 0x186d | `POWER_ON_TIME_WITH_MOTOR_SUPPORT` | Power-On Time (Motor Support) | uint | R |  |  |
+| 0x186d | `POWER_ON_TIME_WITH_MOTOR_SUPPORT` | Power-On Time (Motor Support) | uint | R | ✓ |  |
 | 0x186e | `UNLOCK_COMPONENT` | Unlock Component | unknown | R |  |  |
 | 0x186f | `SOUND_STATUS` | Sound status | submessage | R |  |  |
 | 0x1870 | `DRIVE_UNIT_FEATURE_PROPERTIES_RELEASE2` | Drive Unit Feature Properties Release2 | unknown | R |  |  |

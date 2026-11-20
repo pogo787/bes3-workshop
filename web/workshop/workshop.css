@@ -305,6 +305,24 @@ table.t { width: 100%; border-collapse: collapse; font-size: var(--text-sm); fon
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); padding: var(--s4); border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); }
 .switch-row__t { font-weight: 600; font-size: var(--text-sm); }
 .switch-row__d { font-size: var(--text-xs); color: var(--ink-3); margin-top: 2px; }
+
+/* Progressive technical detail (hex, register addresses). Hidden by default. */
+.tech-only { display: none; }
+.show-tech-details .tech-only { display: inline; }
+.tech-toggle { display: flex; justify-content: flex-end; margin: 0 0 var(--s2); }
+.tech-toggle .check { font-size: var(--text-xs); color: var(--ink-3); }
+#btnTech[aria-pressed='true'] { background: var(--primary-soft); border-color: var(--primary); color: var(--primary); }
+
+/* Power-port state pills: Active / Off with the selected state highlighted. */
+.port-pills { display: inline-flex; gap: 6px; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
+.pill { border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2);
+  border-radius: 999px; padding: 6px 12px; font-size: var(--text-xs); font-weight: 600;
+  cursor: pointer; transition: background .15s var(--ease), border-color .15s var(--ease); }
+.pill:hover:not(:disabled) { border-color: var(--primary); }
+.pill[aria-pressed='true'] { background: var(--primary-soft); border-color: var(--primary); color: var(--primary); }
+.pill[data-port-set='disable'][aria-pressed='true'] { background: var(--beam-soft); border-color: var(--beam); color: var(--beam-ink); }
+.pill--plain { background: transparent; border-color: var(--line); font-weight: 500; color: var(--ink-3); }
+.pill:disabled { opacity: .45; cursor: not-allowed; }
 .switch { position: relative; width: 46px; height: 26px; flex: none; }
 .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
 .switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--line-strong); transition: background .2s var(--ease); }
@@ -355,6 +373,7 @@ input.input[type=date], input.input[type=number] { font-family: var(--font-mono)
 .diff__row .to { font-weight: 600; }
 .diff__row.changed .to { color: var(--primary); }
 .diff__row .arrow { color: var(--ink-3); text-align: center; }
+.diff--plain .diff__row { grid-template-columns: minmax(0, 1.1fr) 18px minmax(0, 1fr); }
 
 /* stepper (transfer progress) */
 .stepper { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s2); }

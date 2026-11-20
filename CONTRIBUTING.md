@@ -35,7 +35,8 @@ Before opening a pull request, run all three checks on Node 20 or Node 24:
 ```bash
 node tools/check-all.mjs
 node tools/check-workshop-light.mjs
-node tools/public-tree.mjs --out /tmp/pub
+work=$(mktemp -d)
+node tools/public-tree.mjs --out "$work/public"
 ```
 
 Every behavioral change must update `POLICY.VERSION` in

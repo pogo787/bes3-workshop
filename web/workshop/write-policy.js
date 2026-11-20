@@ -21,7 +21,7 @@
   // the minor number for features and the patch number for fixes; keep the top
   // entry of docs/CHANGELOG.md in step (a source check enforces this). The
   // engine and UI read this from the policy object.
-  const VERSION = { version: '0.52.1', date: '2026-11-14' };
+  const VERSION = { version: '0.59.0', date: '2026-11-20' };
 
   // Every operation is experimental and carries an evidence label:
   //   observed-working  — a change was observed on at least one real bike
@@ -42,11 +42,10 @@
       experimental: true, evidence: 'untested', evidenceNote: 'Not verified on real hardware; only mode 2 is documented.' },
     // Enabled but bounded. A dedicated writer accepts only 1.0–18.0 W in 0.1 W
     // steps (validateLightPower), so the wrong-power risk of an unbounded write
-    // is contained to that documented range. The evidence is 'known-issue':
-    // writing 0x1822 was observed not to change the actual lamp power/output in
-    // practice, even when the register acknowledged the write and read back.
+    // is contained to that documented range. The register sets the 12 V light
+    // port budget and StVZO reserve; it does not dim constant-voltage lamps.
     LIGHT_POWER:     { id: 'LIGHT_POWER',     component: 'DriveUnit',     name: 'BIKE_LIGHT_POWER',         address: 0x1822, writable: true,
-      experimental: true, evidence: 'known-issue', evidenceNote: 'Observed not working: writing 0x1822 (tested with 12.0 W / 08 78 and 15.0 W / 08 96 01) does not change the actual lamp power or output in practice. The lamp effect and other bikes/firmware are not verified.' },
+      experimental: true, evidence: 'observed-working', evidenceNote: 'Verified write + read-back (1.0–18.0 W in 0.1 W steps, Uint8NormFactor10Message). Sets the Drive Unit 12 V light-port power budget and StVZO battery reserve; does NOT dim constant-voltage DC lamps (e.g. Lupine with DC-DC converter). Power-cycle the bike after changing.' },
     SERVICE_DUE:     { id: 'SERVICE_DUE',     component: 'RemoteControl', name: 'SERVICE_DUE',              address: null,   writable: true,
       experimental: true, evidence: 'observed-working', evidenceNote: OBSERVED_WORKING_NOTE },
     BIKE_ID:         { id: 'BIKE_ID',         component: 'RemoteControl', name: 'BIKE_ID',                  address: null,   writable: true,
@@ -217,6 +216,44 @@
       return { steps: [], error: 'Light state could not be read, so it cannot be switched.' };
     }
     return { steps: [withBytes(makeStep('LIGHT_SWITCH', currentOn ? 'Switch light off' : 'Switch light on', !currentOn))], error: null };
+  }
+
+  // planLightToggle(current) -> { direction, steps, error }
+  // The one runtime ON/OFF plan shared by the Workshop UI and the Dev bench
+  // suite, so both send the same bytes for the same physical transition:
+  //  - OFF -> ON : one LIGHT_SWITCH (08 01).
+  //  - ON  -> OFF: the availability bounce, LIGHT_AVAILABLE false (08 00) then
+  //    true (08 01). Some firmware ignores LIGHT_SWITCH=false while the output
+  //    is installed, so the bounce is the observed-working path.
+  // An unavailable output is an explicit error, and an unreadable state emits
+  // no step; neither becomes a guessed default.
+  function planLightToggle(current) {
+    const cur = current || {};
+    if (cur.available === false) {
+      return {
+        error: 'Bike light is marked not available (BIKE_LIGHT_AVAILABLE=false). Enable it before toggling.',
+        steps: [],
+      };
+    }
+    if (cur.on === true) {
+      const off = withBytes(makeStep('LIGHT_AVAILABLE', 'Toggle light off (step 1/2: bounce availability false)', false));
+      // A failed first bounce must not stop the second step: the output has to
+      // be left installed even when the intermediate write is unverified.
+      off.continueOnFailure = true;
+      return {
+        error: null,
+        direction: 'off',
+        steps: [off, withBytes(makeStep('LIGHT_AVAILABLE', 'Toggle light off (step 2/2: restore availability true)', true))],
+      };
+    }
+    if (cur.on === false) {
+      return {
+        error: null,
+        direction: 'on',
+        steps: [withBytes(makeStep('LIGHT_SWITCH', 'Toggle light on (runtime switch)', true))],
+      };
+    }
+    return { error: 'Light state could not be read, so it cannot be toggled.', steps: [] };
   }
 
   // validateLightPower(watt) -> { ok, value, error }
@@ -593,6 +630,7 @@
     VALID_LIGHT_CONFIG: VALID_LIGHT_CONFIG,
     planLight: planLight,
     planLightSwitch: planLightSwitch,
+    planLightToggle: planLightToggle,
     assertWritable: assertWritable,
     validateLightPower: validateLightPower,
     validateHexPayload: validateHexPayload,

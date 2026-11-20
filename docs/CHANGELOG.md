@@ -6,6 +6,467 @@ single source of truth; every commit that changes behaviour bumps that version
 and adds an entry here, newest first. The top entry below must match
 `POLICY.VERSION` (a source check enforces this).
 
+## 0.59.0 — 2026-11-20
+
+- **Live bench port restoration:** Support restoring `DriveUnit.LOW_POWER_PORT_ACTIVE` and `DriveUnit.HIGH_POWER_PORT_ACTIVE` from an empty proto3 (`""`) OFF baseline via `08 00` / `Writers.portActive`, unblocking `live.ports.toggle-high` when the port starts OFF.
+- **Full-hardware profile:** Wire `live.light.power-cycle` into the `full-hardware` and `acceptance` bench profiles; deduplicate blocked target names in skip reasons.
+- **Runtime light cycle on Always-On bikes:** Temporarily switch `BIKE_LIGHT_CONFIGURATION` from `1` (Always-On) to `2` (Manual) during `live.light.runtime-cycle` and restore `1` in `finally`.
+- **Test harness:** Stub `addEventListener`/`removeEventListener` on `FakeElement` in `tools/check-workshop-light.mjs` to eliminate the non-fatal `<details>` warning, and add regression tests for empty-baseline port restoration and `live.light.power-cycle` profile wiring.
+
+## 0.58.0 — 2026-11-20
+
+- **fix(dev):** `live.light.runtime-cycle` now stops after a failed Step 1 with an
+  `inconclusive` outcome and an Always-On hint instead of requesting a second
+  availability-bounce row beyond the approved manifest.
+- **feat(dev):** New `live.light.power-cycle` bench scenario writes a bounded
+  ±0.5 W light-port budget offset, verifies the read-back and restores the
+  baseline in recovery.
+- **fix(dev):** `live.ports.read` logs the optional `OEM_PORT_CONFIGURATION`
+  (`0x1830`) without failing on `declined`/`unsupported`; LOW-power port disable
+  ACKs that stay `08 01` across all staged reads are classified
+  `firmware-locked-on` instead of failed.
+- **feat(workshop):** `Writers.portActive` verifies power-port state from the
+  decoded boolean, so a proto3 empty-off read-back reports `applied: true`.
+- **feat(registry):** Confirmed `Uint8NormFactor10Message` schema for
+  `BIKE_LIGHT_POWER`, hours for the power-on time registers, and boolean kind for
+  both power-port registers. Added decoders for OEM field-3 configuration and
+  walk-assist configuration.
+- **feat(policy):** `LIGHT_POWER` is now `observed-working`: the register sets a
+  12 V port power budget and StVZO reserve, not lamp dimming. Power-cycle the
+  bike to apply a changed budget.
+- **feat(ui):** Plain-English light configuration labels, an Always-On hint,
+  Active/Off port pills, a one-line power-budget hint, a single-line PDF serial
+  number and a persisted "Technical details (hex & addresses)" toggle.
+
+## 0.57.0 — 2026-11-19
+
+- **feat(dev):** Full Hardware Bench profile. One reviewed Run Everything pass
+  now covers the readAll audit, the runtime light cycle in both directions, the
+  light startup configuration, the service interval, both accessory power ports
+  with staged re-reads, the empty-payload off probe, general settings, the
+  system ID, the write lab and a read-only writable-register sweep.
+- **feat(dev):** `POLICY.planLightToggle` is the single runtime ON/OFF plan for
+  the Workshop UI and the Dev bench suite: one `LIGHT_SWITCH` to turn on, the
+  `LIGHT_AVAILABLE` false/true bounce to turn off.
+- **feat(dev):** Per-target recovery reconciliation. The combined report states
+  every touched target once, marks it healthy only when the final read-back is
+  `already-at-baseline` or `restored-verified`, and derives the recovery count
+  from that reconciliation.
+- **feat(dev):** The combined report carries the transport kind and a
+  human-readable Markdown bench protocol, downloadable from Step 4.
+- **feat(dev):** Optional Dev Auto-Approve for bench runs. It skips the per-write
+  approval prompts only; the frozen manifest still bounds every write, every
+  TX/RX frame is still logged, and recovery still runs.
+- **feat(dev):** General Settings, Diagnostics and Hardware Sweep suites; port
+  diagnostics classify an empty proto3 payload separately from `08 00`.
+
+## 0.56.2 — 2026-11-18
+
+- **fix(dev):** Live report accounting. `coverage` counts skipped rows
+  separately from executed rows and counts rows that were never scheduled in a
+  partially finished group; `allResultsIncluded` verifies unique result IDs and
+  group membership instead of a tally derived from the same rows. A partially
+  finished report no longer claims full coverage.
+- **fix(dev):** Write evidence wording. A verdict reports engine application, the
+  acknowledgment and the raw follow-up read as separate facts. It no longer
+  claims a dispatch count (the public API exposes no frame counter) or a physical
+  effect, and a same-value write states that changed-value acceptance was not
+  tested.
+- **fix(dev):** The generic negative case is policy-only and no longer calls the
+  production writer; the writer boundary is exercised by a synthetic-adapter
+  check, and payload validation covers the 65-byte oversize case.
+- **fix(dev):** Removed the ID dry-check's unconditional `no-id-write` pass; the
+  UUID codec and registry-readonly policy checks remain.
+- **fix(dev):** The offline summary counts a `timed-out` scenario in `timedOut`
+  only; it is no longer counted again as failed.
+- **fix(dev):** The approval dialog is wider, bounded by the viewport and wraps
+  long payloads. Its scenario list is the only scroll region: mouse, touch and
+  keyboard scrolling reach every row, the list starts at the top on each open,
+  and the checkbox and actions stay outside it. Very short viewports fall back
+  to scrolling the whole dialog. Exact rows and approval checks are unchanged.
+- **fix(dev):** Visible Dev clocks use the browser's local system time, and the
+  text export labels event rows as local system time. Export start/end ISO
+  values, JSON timestamps and filenames keep their existing UTC conventions;
+  no stored timestamp is shifted.
+- **fix(workshop):** The live BLE bike-time row uses the same local formatter as
+  the main readout. The value still comes from the bike; this is presentation
+  only and does not synchronize it. Machine and export fields are unchanged.
+- **fix(workshop):** Light-power wording. The Configuration card labels the
+  `0x1822` field an experimental input range and states that it is a
+  configuration value, not measured lamp power: a matching read-back does not
+  establish electrical output or persistence, the range is not a compatibility
+  guarantee, and 18 W is an upper bound rather than a recommendation. The
+  approval effect text no longer calls it a 12 V rating or a model-specific
+  limit. The validator range, rounded-tenths encoding, writers and protocol
+  behaviour are unchanged.
+- **feat(dev):** The light-power scenario is an isolated, operator-selected
+  synthetic encoding comparison rather than an automatic hardware sweep. Run
+  Everything profiles exclude it, each step holds 15 s and stops between rows,
+  and no electrical measurement is claimed. The synthetic values are test
+  vectors, not recommended lamp settings.
+- **feat(dev):** The private Dev workbench separates connection and test
+  controls from results and diagnostics. Results and trace sit side by side
+  from 1120 px and stack below that; the results table scrolls horizontally in
+  its own labelled region, and the header stops sticking in very short windows.
+  Layout and CSS only: no runner, modal, profile or write logic changed.
+- **fix(release):** `tools/public-tree.mjs` no longer deletes a supplied output
+  path. It requires a new leaf directory under an existing parent, resolves the
+  parent and repository before the containment check, and refuses nonregular or
+  redirected tracked inputs. The output is still a working-tree copy, so publish
+  from a clean detached checkout and only on successful exit.
+- **test:** `tools/check-workshop-light.mjs` reports **281 passed, 0 failed,
+  0 skipped**. New checks cover coverage accounting, the disconnected
+  `prepare()` refusal, the policy-only negative case, the synthetic writer
+  boundary, the ID dry-check and the timed-out summary count. The
+  writer-boundary check uses the simulated transport only.
+
+## 0.56.1 — 2026-11-17
+
+- **feat(dev):** Synthetic full-write Demo acceptance. `live-acceptance-fixture.js`
+  seeds supported nonempty baselines (light, service due, both power ports, a
+  valid matching UUID on both ID components) and the new `full-write-demo`
+  profile runs the light, service, port, generic same-value smoke and valid-ID
+  scenarios, then a final read-only comparison of every frozen baseline target,
+  without touching hardware. Unsupported operations are not forced;
+  the report separates **requested / eligible / executed / skipped** groups and
+  scenarios with reasons, so a healthy runner is never presented as complete
+  feature coverage.
+- **feat(dev):** Evidence fields stay separate: `engineApplied`,
+  `exactRawMatch`, `interpretedOutcome`, `physicalObservation` and
+  `recoveryOutcome`; production `applied` is unchanged. An empty payload stays
+  ambiguous for uncertain port registers and is not generalised into a claim
+  about every protocol type. The same-value smoke says only “Observed one
+  dispatch; follow-up read matched requested existing bytes.”
+- **test(dev):** Ten independent synthetic lifecycle checks: a possibly
+  transmitted write that throws is still tracked and recoverable; a stop inside
+  a multi-step plan prevents the later step; a queued mutation is cancelled
+  before transmission; recovery is withheld while I/O may still write; a
+  recovery timeout halts later mutation groups; abort during recovery prevents
+  later recovery frames; a newer value after preflight invalidates the stale
+  operation; a reconnect never revives the old manifest; maximum duration does
+  not block bounded recovery; unresolved I/O is reported unresolved. A returned
+  `Promise.race` or a swallowed rejection is not accepted as proof that the task
+  stopped: the runner waits a bounded time for quiescence and records
+  `quiescent: false` when it does not settle.
+- **feat(dev):** Report integrity is machine-readable: every child result is
+  present, mutations and recoveries are tied to manifest entries, finalisation
+  follows the bounded recovery decision, unknown outcomes are never marked
+  verified, exactly one automatic download is claimed per terminal path, manual
+  download stays available, the exported JSON parses and totals reconcile, and
+  raw trace exports are marked sensitive. Session references are opaque; the
+  authorization token is not exported and identifier baseline bytes are masked.
+- **test:** Private/public accounting is explicit. The private harness reports
+  executed and skipped counts; a private checkout fails when a required private
+  file is missing; in the public tree the private-only checks are skipped and
+  never counted as successful execution. The public-tree build positively
+  asserts that `dev.html`, `web/dev` and `docs/dev` are absent and that public
+  entry points do not reference the private workbench.
+- **test:** `tools/check-workshop-light.mjs` reports **275 passed, 0 failed,
+  0 skipped**. The end-to-end acceptance and lifecycle checks use the simulated
+  transport only — no browser, USB or BLE.
+
+## 0.56.0 — 2026-11-16
+
+- **feat(dev):** Evidence model rewritten. A read is now `explicit-on`
+  (`08 01`), `explicit-off` (`08 00`), `empty`, `other` or `unavailable`.
+  **An empty payload is never interpreted as off, as `08 00`, or as a proto3
+  default.** `classifyWrite()` keeps the acknowledgment, the engine's fresh
+  read-back and the raw bytes as separate facts; an ACK without a read-back is
+  `inconclusive`, and a known byte mismatch is `failed`.
+- **feat(dev):** Stability classification is separate from completeness and
+  returns `stable-empty` / `stable-nonempty` / `changed` / `single-sample` /
+  `unavailable`. One successful sample cannot establish stability. The
+  rejected `empty-default-false` refinement is gone.
+- **feat(dev):** `live-runner.js` — baseline snapshots are immutable, bound to
+  the session token and mode that produced them, and record `restorable` /
+  `restorableReason` per target. Recovery restores only touched targets, maps
+  each target to one supported writer, and is verified by a fresh read-back.
+  Outcomes: `already-at-baseline`, `restored-verified`, `restore-unconfirmed`,
+  `restore-failed`, `recovery-not-attempted-session-lost`,
+  `recovery-not-supported`, `recovery-aborted-by-user`. Scenario results now
+  carry `terminationReason`, `functionalOutcome` and `recoveryOutcome`.
+- **feat(dev):** `ctx.check()` collects verdicts without throwing, and
+  `ctx.setOutcome()` applies one aggregate outcome after recovery. An all-no-op
+  scenario is `inconclusive`, never a passed round-trip.
+- **feat(dev):** Stop lifecycle split into **Stop tests and recover** (recovery
+  remains allowed on the original session) and **Abort further writes**
+  (recovery is also stopped). Neither retracts a frame that was already
+  transmitted, and the recovery token bypasses only the Dev stop flag — never
+  the engine's session, authorization or approval gates.
+- **feat(dev):** All live suites rewritten to the new API: light plans are
+  judged step by step, service writes restore only `SERVICE_DUE`, ports treat
+  empty as ambiguous, and ID reads validate decoded UUIDs, never match two
+  invalid values and mask identifiers. No ID write or sync is performed.
+- **feat(dev):** New `live-suite-generic.js` — negative authorization tests
+  (reserved and unknown generic targets are rejected before I/O) and an
+  optional frozen-allowlist same-value smoke test. The public API exposes no
+  wire-frame counter, so the suite reports that capability gap instead of
+  inventing a frame count.
+- **feat(dev):** New `live-orchestrator.js` — **Run Everything** with three
+  profiles (Fast Demo / Fast Live / Extended), one reviewed approval, sequential
+  execution, per-group verified recovery, and one combined JSON download
+  (`bes3-dev-run-all-<ISO>-<short-run-id>.json`) plus a persistent manual
+  re-download button. Read-only preparation captures the baseline and resolves
+  every exact write payload **before** approval. The frozen manifest binds the
+  run ID, session token/mode, exact operation/component/register/payload rows,
+  bounded use counts, optional branches, recovery rows and a maximum duration.
+  The runner refuses any step that is not covered by those grants, in Demo as
+  well as Live. A group whose recovery is not verified halts the remaining
+  mutation groups and is reported as unresolved. The report is finalised and
+  downloaded once on completion, failure, stop or handled fatal error, and
+  records `terminationReason`, `incomplete`, `halted`, `unresolvedTargets` and
+  per-scenario event logs. Electrical light-power variants, redundant restore
+  scenarios and the unselected high-power port are excluded from auto-run.
+  Refused when no bike or demo session is connected.
+- **fix(dev):** `live-ui.js` no longer overwrites `BES3DevLiveRunner.onDebugLog`,
+  so wire frames reach the run log and JSON export again. Download URLs are
+  revoked after the download starts instead of immediately.
+- **fix(dev):** `live-suite-service.js` used `ctx.ctx.readKey`; the ID suite
+  asserted the wrong tier (`blocked` instead of `registry-readonly`).
+- **fix(dev):** Offline summary counts no longer have an unreachable
+  `timed-out` branch and now report inconclusive, skipped, unsupported and
+  unknown separately.
+- **test:** `tools/check-workshop-light.mjs` adds evidence-model, orchestrator,
+  end-to-end live-runner, manifest-bound grant, stop/finalisation, quiescence and
+  generic-writer frame-count checks; the suite reports **263 passed, 0 failed**.
+  The end-to-end checks run the real engine against the simulated transport only
+  — no browser, no USB, no BLE.
+
+## 0.55.5 — 2026-11-15
+
+- **feat(dev):** Ports suite — after any **disable write that ends
+  `inconclusive`**, a read-only stability triage re-reads the same register at
+  +5 s and +15 s, plus +60 s when the new **Extended re-read triage** checkbox
+  is enabled. Each re-read logs elapsed ms since the write, raw hex, decoded
+  value, response status, payload length and a note that the MCSP numeric
+  StatusCode byte is not exposed by the public `W.readKey` API. Raw transport
+  frames remain visible in the trace via the existing `Bes3DebugLog` hook.
+- **feat(dev):** `live-write-helpers.js` — new `triageInconclusive()` (staged
+  re-reads, honours `ctx.stopped`, never writes) and pure `classifyStability()`
+  returning `stable-empty` / `stable-unchanged` / `changed` / `unknown`. A
+  `stable-empty` result refines the verdict sub-class to
+  **`inconclusive/empty-default-false`**.
+- **fix(dev):** `evaluateVerdicts()` now routes its verdict through
+  `ctx.assert(false, …)` / `ctx.inconclusive(…)`, so **assertCount is no longer
+  0** for scenarios that performed verdict checks; inconclusive verdicts are
+  logged at severity `warn` with no thrown stack, and the structured verdict is
+  kept in the result.
+- **feat(dev):** `dev.html` + `live-ui.js` — "Extended re-read triage (+60 s)"
+  checkbox (default **off**, forced off for an orchestrated Run Everything via
+  `window.BES3DevSetExtendedPolling(false)`).
+- **feat(dev):** `dev-logger.js` — text export summary now reports every status
+  separately (passed / inconclusive / failed / timed-out / cancelled / skipped);
+  previously `inconclusive` was silently dropped from the counts.
+- **feat(dev):** New self-test `live.self.stability-classify` covering
+  `stable-empty` → `empty-default-false`, `stable-unchanged`, `changed` and
+  `unknown`.
+- **chore:** Port toggle scenario timeout raised to 180 s to accommodate the
+  standard +5 s/+15 s triage (engine/policy verification unchanged).
+- **docs:** Distribution check now also asserts `triageInconclusive` and
+  `classifyStability` are exported by `live-write-helpers.js`.
+
+## 0.55.4 — 2026-11-15
+
+- **feat(dev):** Introduce `inconclusive` as a distinct fourth status in the
+  live runner, separate from `passed`/`failed`/`cancelled`. A scenario whose
+  write was ACKed but not engine-confirmed (either `inconclusive/semantic` for
+  proto3 empty=08 00 equivalence, or `inconclusive/mismatch` for real value
+  disagreement) is now status `inconclusive` — never `passed` or `failed`.
+- **feat(dev):** `web/dev/live/live-write-helpers.js` — new shared helper module
+  (`window.BES3DevWriteHelpers`): `classifyWrite`, `evaluateVerdicts`,
+  `restorePort`, `logFinalSummary`, `portIsEnabled`, `portIsOff`.
+  `evaluateVerdicts()` defers the final verdict across all write steps (enable +
+  disable both run), then throws `_isInconclusive` or `_isAssertion` accordingly.
+  Always produces at least one explicit assertion.
+- **feat(dev):** `live-runner.js` — `ctx.inconclusive(reason)` throws
+  `{_isInconclusive:true}` → runner sets `status='inconclusive'`. Added to
+  `makeAssertions()`, `ctx`, `catch` block, and `buildSummary()` counts.
+- **fix(dev):** `live-suite-ports.js` — rewritten using `evaluateVerdicts`:
+  both toggle steps always run (deferred verdict); no-op detection before each
+  write; always-restore in `finally`; structured FINAL SUMMARY log.
+- **feat(dev):** 5 new Live Self-Test scenarios: `inconclusive-status` (verifies
+  `ctx.inconclusive()` produces inconclusive status), `write-classify-passed`,
+  `write-classify-inconclusive-semantic` (simulates BRC3100 empty read-back),
+  `write-classify-failed-no-ack`, `write-unchanged-mode-demo` (uses
+  `Bes3WorkshopDemo.setMode('unchanged')` as the fake transport).
+- **feat(dev):** `live-ui.js` — amber `~` icon and `b-inconclusive` badge for
+  inconclusive results; summary bar shows `~N inconclusive` count.
+- **feat(dev):** `dev-logger.js` — `exportText` uses `INCO` badge for
+  inconclusive scenarios; separate count from failed.
+- **feat(dev):** `dev.html` — amber `.b-inconclusive` CSS badge and table row
+  style; loads `live-write-helpers.js` before suite files.
+- **fix(dev):** `check-workshop-light.mjs` distribution check extended:
+  verifies `live-write-helpers.js` exists and exposes `BES3DevWriteHelpers`,
+  `classifyWrite`, `evaluateVerdicts`. Suite count unchanged at 243.
+
+## 0.55.3 — 2026-11-15
+
+- **fix(dev):** Rewrite port toggle scenarios with proper three-class verdict
+  system (passed / inconclusive / failed) and always-restore logic.
+  - `classifyWrite(result, afterEntry, expectedHex)` — distinguishes:
+    - `passed`: acked=true, applied=true, read-back confirmed
+    - `inconclusive/semantic`: acked but read-back empty vs intended `08 00`
+      (proto3 default false; write very likely applied; does NOT hard-fail)
+    - `inconclusive/mismatch`: acked but genuinely different value (hard-fail)
+    - `failed`: not acked, blocked, or transport error (hard-fail)
+  - Every write step now uses `portIsEnabled()`/`portIsOff()` to skip no-op
+    writes (empty == off semantics at the dev-test level).
+  - `restorePort()`: always restores the pre-test raw value via the normal
+    `ctx.runWrite` / `W.runPlan` approval path in a `finally` block.
+  - Structured `FINAL SUMMARY` log per scenario: before, enable/disable
+    verdicts, restored yes/no, "bike state vs baseline" note.
+  - All `W.readKey` calls already migrated to `ctx.readKey` (0.55.2).
+- **feat(dev):** Auto-capture baseline before every write suite if none exists
+  (`live-ui.js onRunWriteSuite`). Prevents scenarios from running a restore
+  step with nothing to restore to.
+- **doc:** Item 1 proposal (not applied): narrowly-scoped `empty ↔ 08 00`
+  equivalence in `Writers.generic` read-back match function in `engine.js`.
+  Exact diff, required tests, and risk documented in conversation; requires
+  explicit approval before implementation.
+
+## 0.55.2 — 2026-11-15
+
+- **fix(dev):** Fix critical cancellation bug in `live-runner.js`: `runOne()`
+  `finally` block was setting `cancelToken.cancelled = true` (the shared
+  run-level token), so completing any one scenario immediately cancelled all
+  remaining ones. Fix: introduce a per-scenario `scToken` with its own
+  `_stopped` flag; timeout and finally only set `scToken.stop()`, never the
+  run-level token. The run-level token is now exclusively set by the user's
+  Stop button (`LR.cancel()`).
+- **fix(dev):** Add per-scenario stop flag (`ctx.stopped`, `ctx.readKey`,
+  `ctx.runWrite`) checked before every I/O call. A timed-out or stopped
+  scenario cannot start a new read or write after `Promise.race` resolves.
+  Orphaned scenario promises are silenced with `.catch(() => {})` to prevent
+  unhandled rejections.
+- **feat(dev):** Add `web/dev/live/live-runner-selftests.js` (4 self-tests in
+  the "Live Self-Tests" suite): `stop-flag-clean`, `assertion-fails-no-cancel`,
+  `pass-after-fail`, `readkey-in-demo`. Run with Connect Demo; expect all 4 to
+  run in sequence with `assertion-fails-no-cancel` failing but not cancelling
+  subsequent scenarios.
+- **feat(dev):** All suite files now use `ctx.readKey()` wrapper (instead of
+  `W.readKey()` directly) so the stop flag is checked before every read.
+- **feat(dev):** Write scenarios now carry a `registerSummary` field. The
+  approval modal lists all scenarios in the suite (read + write, in order) with
+  write scenarios marked `✎` and their register/op/payload description.
+- **fix(dev):** `check-workshop-light.mjs`: distribution check for live runner
+  extended to also verify `live-runner-selftests.js` exists (same check, new assertion). Suite count unchanged at 243.
+
+## 0.55.1 — 2026-11-15
+
+- **fix(dev):** Fix approval modal "Confirm & Run" button not being clickable.
+  Root cause: modal was appended inside `#live-panel`; now appended directly
+  to `document.body` so it is completely independent of any parent's
+  `display:none` state. Added a mandatory confirmation checkbox that must be
+  checked before the OK button is enabled — prevents accidental clicks and
+  clarifies the write intent.
+- **fix(dev):** Add persistent connection status badge in the sticky page header
+  (colour-coded dot + label: Not connected / Demo / Live — bike model).
+  Added "EXPERIMENTAL: ON/OFF" badge next to it. Both update on every engine
+  `change` event.
+- **feat(dev):** Reorganise `dev.html` into a clear four-step workflow (1 Connect,
+  2 Run Tests, 3 Results, 4 Trace & Export). Mode tabs (Live Bike / Offline)
+  live inside Step 2. Write suites each get their own run button (Bike Light,
+  Service Interval, Power Ports, etc.) so the user knows exactly what will run.
+  Auto-Restore Baseline checkbox runs `LR.restoreBaseline()` automatically after
+  each write suite. Emergency Stop / Restore Baseline Now are always reachable.
+- **feat(dev):** All disabled buttons carry a `title` tooltip explaining why they
+  are disabled ("Connect a bike or Demo first", "Enable Experimental Writes first").
+- **feat(dev):** Unified trace panel (Step 4) shared by both live and offline
+  runners. Filterable by All / Errors / Wire TX-RX / Assertions. Export buttons
+  in Step 4 export whichever run (live or offline) completed last.
+- **fix(dev):** `dev-ui.js` wires event listeners onto HTML-provided buttons
+  rather than re-building them, removing button duplication. `buildTracePanel()`
+  removed; trace appends to the shared `#trace-events` container.
+
+## 0.55.0 — 2026-11-15
+
+- **feat(dev):** Live Hardware & Workshop Feature Test Workbench in `dev.html`.
+  Adds a first-class "Live Bike" mode alongside the existing "Offline / Synthetic"
+  mode. The page now loads the full production stack (engine, transports, protocol,
+  write-policy, demo) and intercepts `Bes3DebugLog` for wire-level tracing.
+  - **Connection bar**: Connect USB (`W.connect()`), Connect BLE-MCSP
+    (`W.connectBleMcsp()`), Connect Demo (`W.startDemo()`), Disconnect.
+    Live status pill, experimental-writes opt-in with warning banner, and
+    Snapshot Baseline / Restore Baseline buttons.
+  - **Baseline capture/restore** (`BES3DevLiveRunner.captureBaseline/restoreBaseline`):
+    snapshots key writable registers (BIKE_LIGHT, BIKE_LIGHT_AVAILABLE,
+    BIKE_LIGHT_POWER, SERVICE_DUE, ports, BIKE_IDs) and restores them via
+    the production write pipeline including all authorization gates.
+  - **Live runner** (`web/dev/live/live-runner.js`): sequential scenario execution
+    against `window.Bes3Workshop`, scoped batch-approve for live-mode `runPlan`
+    calls (approves only pre-listed op+bytes combinations), wire tracing via
+    `Bes3DebugLog` hook, engine `change` event logging, per-step TX/RX logging.
+  - **6 live feature suites** (`web/dev/live/live-suite-*.js`, 21 scenarios):
+    - Read/Diagnostics (3): readAll, snapshot key registers, probe-remote
+    - Bike Light (5): read state, toggle ON via planLight, toggle OFF (bounce),
+      power variants 1.0/5.0/12.0/15.0/18.0 W, restore from baseline
+    - Service Interval (5): read, set +1500 km, set +1 year, clear, restore
+    - Power Ports (4): read, unchanged-detection, toggle-low, toggle-high
+    - ID / System ID (2): read both BIKE_IDs with match check, dry-check tier/payload
+    - Write Lab / Generic (2): read-only probe of registry-readonly register, tier distribution
+  - **Pre-run approval modal**: write suites show a summary of write scenarios
+    before execution; batch-approve scopes the engine's approval callback to
+    exactly the pre-listed step op+bytes pairs.
+  - **Live UI** (`web/dev/live/live-ui.js`): connection bar, mode tabs
+    (Live Bike / Offline Synthetic), live scenario list, live trace panel with
+    follow-tail, JSON/text export with ISO timestamp.
+  - **Wire logging**: all `Bes3DebugLog.log` calls are captured and forwarded to
+    the live trace panel; engine `change` events log session mode and canMutate.
+  - `check-workshop-light.mjs`: +1 distribution check for live runner files
+    (suite count 242 → 243).
+
+## 0.54.0 — 2026-11-15
+
+- **feat(dev):** Phase 3 Dev/Diagnostics workbench expansion.
+  - Fix `proto.hex-utils`: `encodeBoolArg(false)` correctly returns `[]` (proto3
+    default omission); scenario updated to assert `length === 0`.
+  - Fix `session.demo-lifecycle`: `sessionMode()` returns `'file'` as base state
+    (never `'idle'`); scenario corrected.
+  - **Timestamped export filenames**: JSON and text exports now include an ISO
+    timestamp, e.g. `bes3-dev-run-2026-11-15T17-30-00.json`.
+  - **New scenario suite: Transports** (`web/dev/scenarios/transports.js`, 9
+    scenarios): WebUSB full/stall/short/reject write paths, ACK timeout (10
+    polls), error ACK byte, post-transfer controlTransferIn failure; BLE-MCSP
+    split-notification reassembly, two-frames-in-one-notification, oversized
+    fragment cap and recovery; BLE Live Data decode from known fixture.
+  - **New scenario suite: Import/Privacy** (`web/dev/scenarios/import-privacy.js`,
+    6 scenarios): valid import, malformed JSON / bad tool / invalid date,
+    `__proto__` / `constructor` key rejection, hostile HTML strings preserved as
+    text, anonymization masking, imported readout read-only.
+  - **New scenario suite: Config/Policy** (`web/dev/scenarios/config-policy.js`,
+    6 scenarios): `validateLightPower` bounds and type checks, `validateHexPayload`
+    canonical form and error cases, `writeLabNextStep` full state machine,
+    `judgeWrite` all outcome combinations, `genericTier` unknown/readonly/map,
+    `encodeServiceDue`/`decodeServiceDue` round-trip and boundaries.
+  - **New scenario suite: UI/Report** (`web/dev/scenarios/ui-report.js`, 2
+    scenarios): `Bes3WorkshopReport.build()` loads and runs without triggering
+    `jsPDF.save()` (download is explicit user action); empty-state build
+    completes without throwing.
+  - **Runner self-tests** (+2): `self.cancel-token-rejects-sleep` verifies
+    cooperative cancellation at sleep boundaries; `self.log-events-cap` verifies
+    the MAX_EVENTS cap, dropped counter, and truncated flag.
+  - `dev-runner.js`: added script paths for `issues`, `reportPdf`, `usbAck`,
+    `webusb`, `webble`, `webbleMcsp`; added `'report'` script set; exposed
+    `getScript(key)` for transport scenarios that need custom fake navigators.
+  - `check-workshop-light.mjs`: +1 distribution check (all 8 scenario files
+    present in private tree); suite count 241 → 242.
+
+## 0.53.0 — 2026-11-15
+
+- **feat(dev):** Add private Dev / Diagnostics workbench tab (`dev.html`,
+  `web/dev/`). A standalone browser page that runs registered functional
+  test scenarios sequentially against isolated production code sandboxes —
+  no real hardware required. Features: per-scenario synthetic sandbox via
+  `new Function('window','navigator',src)` (mirrors `check-workshop-light.mjs`
+  isolation pattern), hardware traps (`navigator.usb/bluetooth` undefined,
+  USB transport factory throws), fast-forward cooperative cancellation,
+  structured logging with safe serialization of circular/TypedArray/BigInt/
+  Infinity values, JSON and text export, and a live trace panel. Phase 2
+  vertical slice covers 13 scenarios in 4 suites: Protocol (3), Session (2),
+  Writes (3), Self/infrastructure (5). Excluded from the public release tree
+  via `tools/public-exclude.txt`; 5 new distribution checks added to
+  `tools/check-workshop-light.mjs` (suite count 236 → 241).
+
 ## 0.52.1 — 2026-11-14
 
 - **fix(ui):** The two separate API availability hints (one for WebUSB, one for

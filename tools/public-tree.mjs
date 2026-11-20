@@ -2,7 +2,7 @@
 // Builds and verifies the public release tree from git-tracked files minus
 // tools/public-exclude.txt, then runs check-all.mjs, check-workshop-light.mjs,
 // and a privacy scan inside the output directory. Never modifies the repository.
-import { readFileSync, existsSync, mkdirSync, rmSync, copyFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, lstatSync, realpathSync, copyFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -20,15 +20,18 @@ function parseOutArg(argv) {
 
 const outArg = parseOutArg(process.argv);
 if (!outArg) {
-  console.error('Usage: node tools/public-tree.mjs --out <DIR>');
+  console.error('Usage: node tools/public-tree.mjs --out <NEW_DIR_WITH_EXISTING_PARENT>');
   process.exit(1);
 }
 
-const outDir = path.resolve(outArg);
+const requestedOut = path.resolve(outArg);
+const outDir = path.join(realpathSync(path.dirname(requestedOut)), path.basename(requestedOut));
+const realRepo = realpathSync(repo);
 if (
-  outDir === repo ||
-  outDir.startsWith(repo + path.sep) ||
-  repo.startsWith(outDir + path.sep)
+  outDir === path.parse(outDir).root ||
+  outDir === realRepo ||
+  outDir.startsWith(realRepo + path.sep) ||
+  realRepo.startsWith(outDir + path.sep)
 ) {
   console.error('Refusing to write public tree inside or above the repository: ' + outDir);
   process.exit(1);
@@ -52,8 +55,8 @@ function isExcluded(relPath) {
 const trackedRaw = execFileSync('git', ['ls-files', '-z'], { cwd: repo, encoding: 'utf8' });
 const tracked = trackedRaw.split('\0').filter(Boolean);
 
-rmSync(outDir, { recursive: true, force: true });
-mkdirSync(outDir, { recursive: true });
+// Claim a fresh destination. Never clear or reuse a caller-owned directory.
+mkdirSync(outDir);
 
 let copiedCount = 0;
 let excludedCount = 0;
@@ -63,7 +66,10 @@ for (const relPath of tracked) {
     continue;
   }
   const srcAbs = path.join(repo, relPath);
-  if (!existsSync(srcAbs)) continue;
+  const source = lstatSync(srcAbs);
+  if (!source.isFile() || realpathSync(srcAbs) !== path.join(realRepo, relPath)) {
+    throw new Error('Refusing nonregular or redirected release input: ' + relPath);
+  }
   const dstAbs = path.join(outDir, relPath);
   mkdirSync(path.dirname(dstAbs), { recursive: true });
   copyFileSync(srcAbs, dstAbs);
@@ -87,6 +93,25 @@ for (const rule of exclusions) {
   const probe = path.join(outDir, rule.replace(/\/$/, ''));
   if (existsSync(probe)) {
     console.error('Excluded path still present in public tree: ' + rule);
+    process.exit(1);
+  }
+}
+
+// Positive absence assertions: the public tree must not contain the private
+// Dev workbench, and no public entry point may reference it. These are
+// assertions, not merely a consequence of the exclusion list.
+for (const rel of ['dev.html', 'web/dev', 'docs/dev']) {
+  if (existsSync(path.join(outDir, rel))) {
+    console.error('Private Dev asset present in public tree: ' + rel);
+    process.exit(1);
+  }
+}
+for (const rel of ['index.html', 'README.md', 'WORKSHOP.md']) {
+  const abs = path.join(outDir, rel);
+  if (!existsSync(abs)) continue;
+  const text = readFileSync(abs, 'utf8');
+  if (/\bdev\.html\b|\bweb\/dev\b|BES3Dev/.test(text)) {
+    console.error('Public entry point references the private Dev workbench: ' + rel);
     process.exit(1);
   }
 }

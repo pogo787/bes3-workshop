@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light" data-version="0.52.1">
+<html lang="en" data-theme="light" data-version="0.59.0">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -34,7 +34,7 @@
     </nav>
 
     <div class="topbar__actions">
-      <span id="verTop" class="muted" style="font-size:var(--text-xs)">Workshop v0.52.1</span>
+      <span id="verTop" class="muted" style="font-size:var(--text-xs)">Workshop v0.59.0</span>
       <span class="conn" id="connPill" data-state="idle"><span class="conn__dot" aria-hidden="true"></span><span id="connText">Not connected</span></span>
       <button class="btn btn--primary btn--sm" id="btnTopReconnect" hidden>Reconnect</button>
       <button class="btn btn--ghost btn--sm" id="btnReread" hidden>Re-read</button>
@@ -42,6 +42,7 @@
       <button class="icon-btn" id="btnPhotos" data-act="loadPhotos" data-state="idle" aria-label="Load component photos" title="Component photos: not loaded. Click to load them from cdn.jsdelivr.net for this session (an external request). Without them the Workshop uses local vector icons.">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m4 17 5-4 3.5 3 3-2.5 4.5 3.5"/></svg>
       </button>
+      <button class="btn btn--ghost btn--sm" id="btnTech" aria-pressed="false" title="Show raw hex values and register addresses">Technical details</button>
       <button class="icon-btn" id="btnTheme" aria-label="Toggle light/dark theme" title="Toggle light/dark theme">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
       </button>
@@ -118,7 +119,7 @@
       <li><a href="https://github.com/revlat/bes3-analyzer/tree/main" target="_blank" rel="noopener">revlat/bes3-analyzer</a><span>CAN bus datapoint analysis and cross-verification of light and service interval addresses</span></li>
       <li><a href="https://codeberg.org/bg443/BikeBridge" target="_blank" rel="noopener">bg443/BikeBridge</a><span>Read-only research reference for BES3 BLE/MCSP segmentation, MobileApp peer requests, and assist-mode schemas (GPL-3.0-or-later, no code copied)</span></li>
     </ul>
-    <p class="foot__legal">Unofficial project, not affiliated with or endorsed by Robert Bosch GmbH. Error code summaries reference the <a href="https://help.bosch-ebike.com/en/help-center" target="_blank" rel="noopener">Bosch eBike Help Center</a>. Project repository: <a href="https://github.com/pogo787/bes3-workshop" target="_blank" rel="noopener">github.com/pogo787/bes3-workshop</a>.<span id="verFoot"> · Workshop v0.52.1</span></p>
+    <p class="foot__legal">Unofficial project, not affiliated with or endorsed by Robert Bosch GmbH. Error code summaries reference the <a href="https://help.bosch-ebike.com/en/help-center" target="_blank" rel="noopener">Bosch eBike Help Center</a>. Project repository: <a href="https://github.com/pogo787/bes3-workshop" target="_blank" rel="noopener">github.com/pogo787/bes3-workshop</a>.<span id="verFoot"> · Workshop v0.59.0</span></p>
   </div>
 </footer>
 

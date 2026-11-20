@@ -26,6 +26,31 @@
   // single source of truth, mirrored by docs/CHANGELOG.md.
   const versionInfo = () => POLICY.VERSION || { version: '0.0.0', date: '' };
   const versionLabel = () => 'Workshop v' + versionInfo().version;
+  // Progressive disclosure of raw hex and register addresses. Default off and
+  // remembered across visits; the toolbar button toggles a container class so
+  // secondary technical detail stays one click away.
+  const TECH_KEY = 'bes3.showTechDetails';
+  const ID_SUBTITLE_WITH_ADDR = 'Compares BIKE_ID in drive unit (0x182c) and control unit (0x2184).';
+  let showTech = false;
+  try { showTech = localStorage.getItem(TECH_KEY) === '1'; } catch (_) { /* ignore */ }
+  function applyTechClass() {
+    const on = showTech ? 'true' : 'false';
+    if (document.documentElement && document.documentElement.classList) {
+      document.documentElement.classList.toggle('show-tech-details', showTech);
+    }
+    if (document.body && document.body.classList) document.body.classList.toggle('show-tech-details', showTech);
+    const btn = $('btnTech');
+    if (btn) btn.setAttribute('aria-pressed', on);
+    const box = $('techDetails');
+    if (box) box.checked = showTech;
+  }
+  function setTechnicalDetails(on) {
+    showTech = !!on;
+    try { localStorage.setItem(TECH_KEY, showTech ? '1' : '0'); } catch (_) { /* ignore */ }
+    applyTechClass();
+    if (tab === 'write') renderWrite();
+  }
+  applyTechClass();
   // The version is stamped directly in index.html, so a cached script bundle
   // cannot silently show an old version in the header/footer. These elements are
   // only created as a fallback when the markup does not carry them.
@@ -113,8 +138,9 @@
 
   function lightConfigLabel(v) {
     if (v === null || v === undefined) return '–';
-    if (v === 0) return 'not set (0)';
-    if (v === 2) return 'Remember last light state on power-up (2)';
+    if (v === 1) return '1 — Always On (DRL)';
+    if (v === 2) return '2 — Manual / Switchable';
+    if (v === 3) return '3 — Auto / Sensor';
     return `Setting ${v}`;
   }
 
@@ -434,7 +460,7 @@
       ['Rider power',           has('riderPowerW')         ? String(v.riderPowerW) + ' W'                                              : null],
       ['Ambient brightness',    has('ambientBrightnessLux')? Number(v.ambientBrightnessLux).toFixed(1) + ' lux'                        : null],
       ['Battery SoC',           has('batterySocPercent')   ? String(v.batterySocPercent) + ' %'                                        : null],
-      ['Bike time (UTC)',        has('timeUnixSeconds')     ? new Date(Number(v.timeUnixSeconds) * 1000).toISOString()                  : null],
+      ['Bike time (local)',      has('timeUnixSeconds')     ? fmtDateTime(new Date(Number(v.timeUnixSeconds) * 1000))                  : null],
       ['Odometer',              has('odometerMeters')      ? (Number(v.odometerMeters) / 1000).toFixed(1) + ' km'                      : null],
       ['Bike light',            has('bikeLight')           ? String(v.bikeLight).toLowerCase()                                                : null],
       ['System locked',         has('systemLocked')        ? ynBool(v.systemLocked)                                                        : null],
@@ -607,7 +633,7 @@
   // exact USB read is visible instead of an unsupported "detected" claim.
   function rawDetails(c) {
     if (!c.raw || !c.raw.length) return '';
-    const rows = c.raw.map((r) => `<span>${esc(r.label)}</span><span>${esc(r.display)}${r.hex && r.hex !== r.display ? ' · ' + esc(r.hex) : ''}</span>`).join('');
+    const rows = c.raw.map((r) => `<span>${esc(r.label)}</span><span>${esc(r.display)}${r.hex && r.hex !== r.display ? ' <span class="tech-only">· ' + esc(r.hex) + '</span>' : ''}</span>`).join('');
     return `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--ink-3);font-size:var(--text-xs)">Raw register values</summary><div class="comp__meta" style="margin-top:4px">${rows}</div></details>`;
   }
 
@@ -799,11 +825,11 @@
           <div class="kv-group"><h4>Bike light</h4><dl class="kv">
             <dt>Light installed</dt><dd>${yesNo(d.light.available)}</dd>
             <dt>Light configuration</dt><dd>${esc(lightConfigLabel(d.light.config))}</dd>
-            <dt>Light power rating</dt><dd>${fmtW(d.light.powerW)}</dd>
+            <dt>Light port power budget</dt><dd>${fmtW(d.light.powerW)}</dd>
             <dt>Light currently</dt><dd>${d.light.on == null ? '–' : d.light.on ? 'on' : 'off'}</dd></dl></div>
           <div class="kv-group"><h4>Accessory power ports <span class="chip chip--warn" style="font-size:var(--text-xs);vertical-align:middle" title="Payload encoding not independently verified">Experimental</span></h4><dl class="kv">
-            <dt>Low Power Port</dt><dd>${d.ports.low ? (d.ports.low.status === 'ok' ? esc(portPayloadLabel(d.ports.low.hex || '')) : '–') : '–'}</dd>
-            <dt>High Power Port</dt><dd>${d.ports.high ? (d.ports.high.status === 'ok' ? esc(portPayloadLabel(d.ports.high.hex || '')) : '–') : '–'}</dd></dl></div>
+            <dt>Low Power Port</dt><dd>${d.ports.low ? (d.ports.low.status === 'ok' ? esc(portStateLabel(d.ports.low.hex || '')) : '–') : '–'}</dd>
+            <dt>High Power Port</dt><dd>${d.ports.high ? (d.ports.high.status === 'ok' ? esc(portStateLabel(d.ports.high.hex || '')) : '–') : '–'}</dd></dl></div>
           <div class="kv-group"><h4>Walk assist &amp; drivetrain</h4><dl class="kv">
             <dt>Walk assist enabled</dt><dd>${d.walk ? yesNo(d.walk.enabled) : '–'}</dd>
             <dt>Walk assist speed</dt><dd>${d.walk && d.walk.speed ? NF1.format(d.walk.speed) + ' km/h' : '–'}</dd>
@@ -907,7 +933,7 @@
   function pendingWarning(step, tier) {
     if (step.op === 'BIKE_ID') return 'The System ID write is experimental and untested. A matching read-back does not prove that an ID conflict is resolved.';
     if (step.op === 'SERVICE_DUE' && /^Clear/i.test(step.label)) return 'Clearing the service interval means no service reminder will appear. Regular maintenance is still required.';
-    if (step.op === 'GENERIC_WRITE' && step.portLabel) return 'Power port: experimental and untested. The enable/disable encoding and the electrical effect are unverified. Type the full register name once per Apply batch; nothing is retried and nothing is rolled back.';
+    if (step.op === 'GENERIC_WRITE' && step.portLabel) return 'Power port: experimental. The port state is verified from a decoded boolean read-back. Nothing is retried and nothing is rolled back.';
     if (step.op === 'GENERIC_WRITE' && tier === 'registry-readonly') return 'Read-only in registry. Type the full register name once per Apply batch. The bike will usually refuse this write.';
     if (step.op === 'GENERIC_WRITE' && tier === 'high-impact') return 'High-impact register. Type the full register name once per Apply batch. Nothing is retried and nothing is rolled back.';
     if (step.op === 'GENERIC_WRITE' && step.unreadable) return 'Write-only register. It cannot be read back, so the result will be unverified. Nothing is retried and nothing is rolled back.';
@@ -985,6 +1011,7 @@
   }
   function pendingPanel() {
     if (!pending.length) return '';
+    const tech = showTech;
     const lamp = pendingLightEnables();
     const warnings = Array.from(new Set(pending.map((p) => p.warning).filter(Boolean)));
     const disabled = !W.canMutate || (lamp && !pendingLampConfirmed);
@@ -996,11 +1023,11 @@
       </header>
       <div class="wcard__body">
         <div class="table-wrap"><table class="t">
-          <thead><tr><th>Register</th><th>Change</th><th>Payload</th><th>Tier</th><th>Evidence</th><th></th></tr></thead>
+          <thead><tr><th>Register</th><th>Change</th>${tech ? '<th>Payload</th>' : ''}<th>Tier</th><th>Evidence</th><th></th></tr></thead>
           <tbody>${pending.map((p) => `<tr data-pending-key="${esc(p.key)}">
-            <td class="mono">${esc(p.key)}<br><span class="muted">${esc(p.address)}</span></td>
+            <td class="mono">${esc(p.key)}${tech ? `<br><span class="muted">${esc(p.address)}</span>` : ''}</td>
             <td>${esc(p.oldDisplay)} <span class="arrow">→</span> <strong>${esc(p.newDisplay)}</strong></td>
-            <td class="mono">${esc(p.bytes)}</td>
+            ${tech ? `<td class="mono">${esc(p.bytes)}</td>` : ''}
             <td>${esc(PENDING_TIER_LABEL[p.tier] || p.tier)}</td>
             <td>${esc(p.evidence)}</td>
             <td style="white-space:nowrap"><button class="btn btn--ghost btn--sm" data-pending-edit="${esc(p.key)}" ${p.op === 'GENERIC_WRITE' ? '' : 'disabled'}>Edit</button>
@@ -1403,6 +1430,11 @@
     if (op === POLICY.OP.LIGHT_POWER.id) return (owner) => W.Writers.lightPower(value, owner);
     throw new Error('Unknown light operation: ' + op);
   }
+  function lightStepTarget(s) {
+    if (s.op === 'LIGHT_POWER') return `${Number(s.value).toFixed(1)} W`;
+    if (s.op === 'LIGHT_CONFIG') return lightConfigLabel(s.value);
+    return s.value ? 'on' : 'off';
+  }
   function lightSteps() {
     return lightPlanResult().steps.map((s) => ({
       label: s.label, bytes: s.bytes, op: s.op, component: s.component,
@@ -1467,6 +1499,7 @@
     const el = $('view-write');
     const live = W.isLive;
     const canEdit = W.canMutate;
+    const tech = showTech;
     const d = summary();
     if (!draft.light || !draft.light.touched) draft.light = lightDraftFromState();
     // The System ID write is only offered when the drive unit reports a
@@ -1491,14 +1524,15 @@
       const value = draft.ports[t.key];
       return `<div class="switch-row">
         <div style="flex:1 1 auto;min-width:0">
-          <div class="switch-row__t">${esc(t.label)} <span class="mono muted">${esc(portAddressLabel(t))}</span></div>
-          <div class="switch-row__d">${esc(t.component)}.${esc(t.name)} · currently ${esc(portCurrent(t))}</div>
+          <div class="switch-row__t">${esc(t.label)}${tech ? ` <span class="tech-only mono muted">${esc(portAddressLabel(t))}</span>` : ''}</div>
+          <div class="switch-row__d">${tech ? `${esc(t.component)}.${esc(t.name)} · ` : ''}Currently ${esc(portCurrent(t))}</div>
+          ${t.key === 'LOW' ? '<div class="field__hint">May remain locked active by Drive Unit firmware while powered on.</div>' : ''}
         </div>
-        <select class="select" id="port_${esc(t.key)}" data-port="${esc(t.key)}" style="max-width:190px" ${canEdit ? '' : 'disabled'} aria-label="${esc(t.label)} state">
-          <option value="unchanged" ${value === 'unchanged' ? 'selected' : ''}>Unchanged — no write</option>
-          <option value="enable" ${value === 'enable' ? 'selected' : ''}>Enable (08 01)</option>
-          <option value="disable" ${value === 'disable' ? 'selected' : ''}>Disable (08 00)</option>
-        </select>
+        <div class="port-pills" role="group" aria-label="${esc(t.label)} state">
+          <button type="button" class="pill" data-port-set="enable" data-port-key="${esc(t.key)}" ${canEdit ? '' : 'disabled'} aria-pressed="${String(value === 'enable')}">Active</button>
+          <button type="button" class="pill" data-port-set="disable" data-port-key="${esc(t.key)}" ${canEdit ? '' : 'disabled'} aria-pressed="${String(value === 'disable')}">Off</button>
+          ${value !== 'unchanged' ? `<button type="button" class="pill pill--plain" data-port-set="unchanged" data-port-key="${esc(t.key)}" ${canEdit ? '' : 'disabled'} aria-pressed="false">No change</button>` : ''}
+        </div>
       </div>`;
     }).join('');
     const portWhy = portReasons();
@@ -1607,6 +1641,7 @@
       ${demoNote}
       ${authNotice}
       ${pendingPanel()}
+      <div class="tech-toggle"><label class="check"><input type="checkbox" id="techDetails" ${tech ? 'checked' : ''}> Technical details (hex &amp; addresses)</label></div>
       <div class="section writer">
         <details class="card wcard wcard--collapse" id="lightCard" ${draft.cards.light ? 'open' : ''}>
           <summary class="wcard__head" aria-labelledby="lightTitle">
@@ -1619,7 +1654,7 @@
             <div class="status-row" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
               <div class="status-cell"><div class="status-cell__k">Light output</div><div class="status-cell__v">${d.light.available === null ? 'unknown' : d.light.available ? `<span style="color:var(--ok)">${ICON.check}</span>enabled` : 'disabled'}</div></div>
               <div class="status-cell"><div class="status-cell__k">Light</div><div class="status-cell__v">${d.light.on == null ? 'unknown' : d.light.on ? `<span style="color:var(--beam-ink)">${ICON.check}</span>on` : 'off'}</div></div>
-              <div class="status-cell"><div class="status-cell__k">Light power</div><div class="status-cell__v mono break-any">${fmtW(d.light.powerW)}</div></div>
+              <div class="status-cell"><div class="status-cell__k">Port power budget</div><div class="status-cell__v mono break-any">${fmtW(d.light.powerW)}</div></div>
               <div class="status-cell"><div class="status-cell__k">Startup mode</div><div class="status-cell__v mono break-any">${esc(lightConfigLabel(d.light.config))}</div></div>
             </div>
 
@@ -1644,37 +1679,41 @@
                     ? `<span class="field__hint">Enable light output above to use the switch.</span>`
                     : `<span class="field__hint">Light availability could not be read — refresh first.</span>`}
             </div>
+            ${d.light.config === 1 ? `<div class="notice notice--warn">${ICON.warn}<div><strong>Startup mode 1 — Always On (DRL).</strong> The light may be re-energized immediately after you toggle it off. Select mode 2 — Manual / Switchable to test the runtime switch.</div></div>` : ''}
 
             <details ${dr.available ? 'open' : 'hidden'}>
-              <summary class="field__label" style="cursor:pointer;display:list-item">Light power rating &amp; startup mode</summary>
+              <summary class="field__label" style="cursor:pointer;display:list-item">Light port power budget &amp; startup mode</summary>
               <div style="display:grid;gap:14px;margin-top:10px">
                 <div>
-                  <div class="field__label"><span>Light power rating (0x1822)</span><span class="muted" style="font-weight:500">1.0 – 18.0 W${d.light.powerW === null ? '' : ` · reported ${fmtW(d.light.powerW)}`}</span></div>
+                  <div class="field__label"><span>Light Port Power Budget (W)${tech ? ' <span class="tech-only mono">(0x1822)</span>' : ''}</span><span class="muted" style="font-weight:500">Experimental input range: 1.0–18.0 W${d.light.powerW === null ? '' : ` · reported ${fmtW(d.light.powerW)}`}</span></div>
                   <div class="watt">
-                    <input type="range" id="lPowerRange" min="1" max="18" step="0.1" value="${dr.powerW != null ? escNum(dr.powerW) : ''}" ${powerEditable ? '' : 'disabled'} aria-label="Power in watts">
-                    <div class="watt__num"><input type="number" id="lPower" min="1" max="18" step="0.1" value="${dr.powerW != null ? escNum(Number(dr.powerW).toFixed(1)) : ''}" ${powerEditable ? '' : 'disabled'} aria-label="Power in watts"><span>W</span></div>
+                    <input type="range" id="lPowerRange" min="1" max="18" step="0.1" value="${dr.powerW != null ? escNum(dr.powerW) : ''}" ${powerEditable ? '' : 'disabled'} aria-label="Light port power budget in watts">
+                    <div class="watt__num"><input type="number" id="lPower" min="1" max="18" step="0.1" value="${dr.powerW != null ? escNum(Number(dr.powerW).toFixed(1)) : ''}" ${powerEditable ? '' : 'disabled'} aria-label="Light port power budget in watts"><span>W</span></div>
                   </div>
                   <div class="presets">${PRESETS.map((p) => `<button class="preset" data-preset="${p}" aria-pressed="${dr.powerW != null && Math.abs(p - dr.powerW) < 0.05}" ${powerEditable ? '' : 'disabled'}>${NF1.format(p)} W</button>`).join('')}</div>
                   <p class="field__hint">${d.light.powerW === null
-                    ? 'The current light power could not be read on this bike, so a power write is not offered.'
-                    : 'Known issue (observed not working): writing <span class="mono">0x1822</span> does not change lamp output on tested bikes. Nothing is retried or rolled back. Never set more than your lamps are rated for.'}</p>
+                    ? 'The current light port power budget could not be read on this bike, so a power write is not offered.'
+                    : 'Sets 12 V port power budget &amp; StVZO 2h battery reserve (1.0–18.0 W). Does not dim constant-voltage DC lamps; power-cycle bike to apply. This is a configuration value, not measured lamp power. A matching read-back does not establish electrical output or persistence. The input range is not a compatibility guarantee; check the drive-unit and lighting specifications. Do not choose 18 W just because it is the upper bound.'}</p>
                 </div>
-                <label class="form form--compact"><span class="field__label" style="margin:0">Light startup mode (0x1821)</span>
+                <label class="form form--compact"><span class="field__label" style="margin:0">Light startup mode${tech ? ' <span class="tech-only mono">(0x1821)</span>' : ''}</span>
                   <select class="select" id="lConfig" ${canEdit ? '' : 'disabled'}>
                     <option value="" ${dr.configTouched ? '' : 'selected'}>— choose a mode (leave unchanged) —</option>
-                    ${[1, 2, 3].map((v) => `<option value="${v}" ${dr.configTouched && dr.config === v ? 'selected' : ''}>${v === 2 ? '2 – On power-up: remember last light state (documented)' : `${v} – Experimental / meaning not documented`}</option>`).join('')}
+                    ${[1, 2, 3].map((v) => `<option value="${v}" ${dr.configTouched && dr.config === v ? 'selected' : ''}>${lightConfigLabel(v)}</option>`).join('')}
                   </select>
-                  <span class="field__hint">Only mode <span class="mono">2</span> ("remember last light state on power-up") is confirmed; modes <span class="mono">1</span> and <span class="mono">3</span> are undocumented.</span>
+                  <span class="field__hint">Startup mode selects the light's power-up behaviour. Mode 1 may keep the output energized after a runtime toggle off.</span>
                 </label>
               </div>
             </details>
 
             ${planRes.error ? `<div class="notice notice--bad">${ICON.warn}<div><strong>Cannot write:</strong> ${esc(planRes.error)}</div></div>` : ''}
 
-            ${steps.length ? `<div class="diff" aria-label="Planned changes">
+            ${steps.length ? (tech ? `<div class="diff" aria-label="Planned changes">
               <div class="diff__row diff__row--head"><span>Planned write</span><span>Register</span><span></span><span>Payload</span></div>
               ${steps.map((s) => `<div class="diff__row changed"><span>${esc(s.label)}</span><span class="from mono">0x${(s.address || 0).toString(16)}</span><span class="arrow">→</span><span class="to">${esc(s.bytes)}</span></div>`).join('')}
-            </div>` : (planRes.error ? '' : `<div class="notice notice--ok">${ICON.check}<div>Nothing to write — the bike already matches your selection.</div></div>`)}
+            </div>` : `<div class="diff diff--plain" aria-label="Planned changes">
+              <div class="diff__row diff__row--head"><span>Planned write</span><span></span><span>New value</span></div>
+              ${steps.map((s) => `<div class="diff__row changed"><span>${esc(s.label)}</span><span class="arrow">→</span><span class="to">${esc(lightStepTarget(s))}</span></div>`).join('')}
+            </div>`) : (planRes.error ? '' : `<div class="notice notice--ok">${ICON.check}<div>Nothing to write — the bike already matches your selection.</div></div>`)}
           </div>
           <footer class="wcard__foot">
             <span class="spacer"></span>
@@ -1723,7 +1762,7 @@
           </summary>
           <div class="wcard__body">
             ${portRows}
-            <p class="field__hint">Raw hex values. Unknown values are not treated as off. Unchanged and already-matching ports are not written. One write and one re-read per changed port.</p>
+            <p class="field__hint">${tech ? 'Raw hex and addresses are shown because Technical details is on. ' : ''}Unknown values are not treated as off. Unchanged and already-matching ports are not written. One write and one re-read per changed port.</p>
           </div>
           <footer class="wcard__foot">
             <button class="btn btn--ghost btn--sm" data-act="portRead" ${portCanRead ? '' : 'disabled'}>Read port states</button>
@@ -1736,23 +1775,23 @@
           <summary class="wcard__head" aria-labelledby="idTitle">
             <span class="wcard__icon wcard__icon--card">${ICON.card.id}</span>
             <div style="flex:1 1 auto;min-width:0"><h2 class="wcard__title" id="idTitle">ID conflict &amp; System ID sync ${cardChip('id')}</h2>
-              <p class="wcard__sub">Compares BIKE_ID in drive unit (0x182c) and control unit (0x2184).</p></div>
+              <p class="wcard__sub">${esc(tech ? ID_SUBTITLE_WITH_ADDR : 'Compares BIKE_ID in the drive unit and control unit.')}</p></div>
             <span class="card-chevron" aria-hidden="true"></span>
           </summary>
           <div class="wcard__body">
             <div class="status-row" style="grid-template-columns:repeat(3,minmax(0,1fr))">
-              <div class="status-cell"><div class="status-cell__k">Drive unit (0x182c)</div><div class="status-cell__v mono" style="font-size:var(--text-xs);word-break:break-all">${esc(d.duId || 'not read')}</div></div>
-              <div class="status-cell"><div class="status-cell__k">Control unit (0x2184)</div><div class="status-cell__v mono" style="font-size:var(--text-xs);word-break:break-all">${esc(d.rcId || 'not read')}</div></div>
+              <div class="status-cell"><div class="status-cell__k">Drive unit${tech ? ' (0x182c)' : ''}</div><div class="status-cell__v mono" style="font-size:var(--text-xs);word-break:break-all">${esc(d.duId || 'not read')}</div></div>
+              <div class="status-cell"><div class="status-cell__k">Control unit${tech ? ' (0x2184)' : ''}</div><div class="status-cell__v mono" style="font-size:var(--text-xs);word-break:break-all">${esc(d.rcId || 'not read')}</div></div>
               <div class="status-cell"><div class="status-cell__k">Status</div><div class="status-cell__v">${!d.duId || !d.rcId ? 'incomplete' : d.idConflict ? `<span style="color:var(--bad)">${ICON.warn}</span>conflict detected` : `<span style="color:var(--ok)">${ICON.check}</span>matching`}</div></div>
             </div>
             ${d.idConflict
               ? `<div class="notice notice--bad">${ICON.warn}<div><strong>System ID mismatch:</strong> drive unit <span class="mono">${esc(d.duId)}</span> / control unit <span class="mono">${esc(d.rcId)}</span>.</div></div>`
               : d.duId && d.rcId ? `<div class="notice notice--ok">${ICON.check}<div>Matching IDs alone do not establish the cause of an error, and no rewrite is required merely because the values match.</div></div>`
               : `<div class="notice notice--warn">${ICON.warn}<div><strong>Comparison incomplete:</strong> at least one System ID was not read.</div></div>`}
-            <div class="notice">${ICON.info}<div>Writes the 16-byte UUID as protobuf (<span class="mono">0a 12 0a 10 …</span>) to <span class="mono">0x2184</span> and re-reads it. No upstream reference documents a resolve-ID-conflict command. Experimental — untested.</div></div>
+            <div class="notice">${ICON.info}<div>Writes the 16-byte UUID${tech ? ' as protobuf (<span class="mono">0a 12 0a 10 …</span>) to <span class="mono">0x2184</span>' : ''} and re-reads it. No upstream reference documents a resolve-ID-conflict command. Experimental — untested.</div></div>
           </div>
           <footer class="wcard__foot">
-            <span class="field__hint" style="margin:0;flex:1 1 auto;min-width:0">Target: <span class="mono">0x2184</span> ← drive-unit ID</span>
+            ${tech ? '<span class="field__hint" style="margin:0;flex:1 1 auto;min-width:0">Target: <span class="mono">0x2184</span> ← drive-unit ID</span>' : ''}
             <span class="spacer"></span>
             <button class="btn ${d.idConflict ? 'btn--primary' : 'btn--ghost'} btn--sm" data-act="idSyncRc" ${canEdit && duIdValid ? '' : 'disabled'}>Experimental: write drive-unit ID to control unit</button>
           </footer>
@@ -1821,9 +1860,13 @@
     document.querySelectorAll('input[name="svc"]').forEach((r) => { r.onchange = () => { draft.service.option = r.value; renderWrite(); }; });
     const sd = $('svcDate'); if (sd) sd.onchange = () => { draft.service.date = sd.value; renderWrite(); };
     const sk = $('svcKm'); if (sk) sk.onchange = () => { draft.service.km = sk.value; renderWrite(); };
-    document.querySelectorAll('[data-port]').forEach((sel) => {
-      sel.onchange = () => { draft.ports[sel.dataset.port] = sel.value; renderWrite(); };
+    document.querySelectorAll('[data-port-set]').forEach((btn) => {
+      btn.onclick = () => { draft.ports[btn.dataset.portKey] = btn.dataset.portSet; renderWrite(); };
     });
+    const techBox = $('techDetails');
+    if (techBox) techBox.onchange = () => setTechnicalDetails(techBox.checked);
+    const techBtn = $('btnTech');
+    if (techBtn) techBtn.onclick = () => setTechnicalDetails(!showTech);
     // Every Configuration card is a dropdown. Keep its open state across the
     // re-renders caused by its own controls, exactly like the raw-payload
     // details in the Write Lab.
@@ -2069,11 +2112,13 @@
   // Human-readable label for a port register payload. 08 01 = on,
   // 08 00 = off (empty read-backs also treated as off: proto3 implicit zero).
   // Used in both the Overview and the Configuration card.
-  function portPayloadLabel(hex) {
-    if (hex === PORT_PAYLOAD.enable) return 'on';
-    if (!hex || hex === PORT_PAYLOAD.disable) return 'off';
+  function portStateLabel(hex) {
+    if (hex === PORT_PAYLOAD.enable) return 'Active';
+    if (!hex || hex === PORT_PAYLOAD.disable) return 'Off';
     return hex;
   }
+  // Kept as the shared identifier used by the registry/card source checks.
+  function portPayloadLabel(hex) { return portStateLabel(hex); }
   function portCurrent(t) {
     const cur = V(t.component + '.' + t.name);
     if (!cur || cur.status !== 'ok') return 'not read';
@@ -2152,13 +2197,13 @@
         bytes: v.hex,
         op: 'GENERIC_WRITE', component: t.component, name: t.name, address: t.address,
         typedName: '', unreadable: !!(entry && entry.readable === false),
-        intended: `raw ${v.hex}`, value: v.hex,
-        currentDisplay: cur && cur.status === 'ok' ? (cur.hex || '(empty)') : 'not read',
+        intended: choice === 'enable' ? 'Active' : 'Off', value: v.hex,
+        currentDisplay: cur && cur.status === 'ok' ? portStateLabel(cur.hex || '') : 'not read',
         portLabel: t.label,
-        // Port register encoding is unverified; a mismatched read-back must
-        // not block the remaining ports from being written.
+        // The dedicated writer judges a fresh read-back as a decoded boolean,
+        // so a proto3 empty-off payload reports applied instead of mismatch.
         continueOnFailure: true,
-        run: (owner) => W.Writers.generic(t.component, t.name, v.bytes, owner),
+        run: (owner) => W.Writers.portActive(t.name, choice === 'enable', owner),
       });
     }
     if (!steps.length) { toast('Nothing to write — the ports already match your selection'); return; }
@@ -2436,7 +2481,7 @@
       case 'LIGHT_AVAILABLE': return 'Marks the 12 V light output as installed or not installed in the drive unit.';
       case 'LIGHT_SWITCH': return 'Switches the bike light on or off immediately.';
       case 'LIGHT_CONFIG': return 'Sets the light behaviour at power-up.';
-      case 'LIGHT_POWER': return 'Sets the 12 V light output power rating (experimental; 1.0–18.0 W).';
+      case 'LIGHT_POWER': return 'Requests an experimental light power configuration value (1.0–18.0 W input range; not a measured output or a model-specific limit).';
       case 'SERVICE_DUE': return 'Sets or clears the service reminder in the control unit.';
       case 'BIKE_ID': return 'Writes the drive unit System ID into the control unit.';
       case 'CLEAR_ISSUES': return 'Deletes stored fault-memory entries (simulation only).';

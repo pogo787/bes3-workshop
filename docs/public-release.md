@@ -23,25 +23,31 @@ from the public tree:
 
 ## Building and Verifying the Public Tree
 
-Run `tools/public-tree.mjs` with an output directory outside the repository:
+Run `tools/public-tree.mjs` with a new output directory outside the repository:
 
 ```bash
-node tools/public-tree.mjs --out /tmp/pub
+work=$(mktemp -d)
+node tools/public-tree.mjs --out "$work/public"
 ```
 
 `tools/public-tree.mjs` uses only Node.js built-in modules and never modifies
 the working repository:
 
-1. Rejects any `--out` path located inside or above the repository root.
-2. Reads `git ls-files -z` and copies every tracked file that does not match
-   `tools/public-exclude.txt` into `--out`.
-3. Verifies that none of the excluded paths exist in `--out`.
-4. Runs `node tools/check-all.mjs` and `node tools/check-workshop-light.mjs`
+1. Requires a new leaf directory whose parent already exists. It never clears,
+   reuses or deletes an existing output directory.
+2. Resolves the parent directory and the repository root before the containment
+   check, so a symlink alias cannot put the output inside the checkout. It
+   rejects any `--out` path inside or above the repository root.
+3. Reads `git ls-files -z` and copies every tracked file that does not match
+   `tools/public-exclude.txt` into `--out`. A missing, redirected (symlink) or
+   nonregular tracked input is refused rather than skipped or dereferenced.
+4. Verifies that none of the excluded paths exist in `--out`.
+5. Runs `node tools/check-all.mjs` and `node tools/check-workshop-light.mjs`
    inside `--out`.
-5. Runs a privacy scan over all text files in `--out` (checking for private IPv4
+6. Runs a privacy scan over all text files in `--out` (checking for private IPv4
    ranges, local filesystem mount paths, internal hostnames, and non-noreply
    personal email addresses outside `web/vendor/`).
-6. Exits non-zero on any check or privacy finding.
+7. Exits non-zero on any check or privacy finding.
 
 ## Static hosting: cache revalidation
 

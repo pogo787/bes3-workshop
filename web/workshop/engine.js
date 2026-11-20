@@ -223,8 +223,34 @@
   };
   const CORE_COMPONENTS = ['DriveUnit', 'Battery', 'RemoteControl'];
 
+  // Minimal protobuf varint-field reader for small registers that need more
+  // than field 1. Wire types 0 (varint) and 2 (length-delimited) are supported;
+  // anything else stops parsing rather than guessing at the payload.
+  function decodeSimpleVarintFields(bytes) {
+    const out = {};
+    let i = 0;
+    while (i < bytes.length) {
+      const tag = bytes[i++];
+      const field = tag >>> 3;
+      const wireType = tag & 7;
+      if (wireType === 0) {
+        const r = readVarint(bytes, i);
+        if (!Number.isSafeInteger(r.value)) break;
+        out[field] = r.value;
+        i = r.next;
+      } else if (wireType === 2) {
+        const len = readVarint(bytes, i);
+        i = len.next;
+        if (len.value < 0 || i + len.value > bytes.length) break;
+        i += len.value;
+      } else break;
+    }
+    return out;
+  }
+
   // Values the engine knows how to interpret beyond the generic decoder.
-  const BOOL_KEYS = new Set(['DriveUnit.BIKE_LIGHT', 'DriveUnit.BIKE_LIGHT_AVAILABLE', 'RemoteControl.SYSTEM_LOCKED',
+  const BOOL_KEYS = new Set(['DriveUnit.BIKE_LIGHT', 'DriveUnit.BIKE_LIGHT_AVAILABLE',
+    'DriveUnit.LOW_POWER_PORT_ACTIVE', 'DriveUnit.HIGH_POWER_PORT_ACTIVE', 'RemoteControl.SYSTEM_LOCKED',
     'RemoteControl.SYSTEM_LOCK_FEATURE_ENABLED', 'RemoteControl.E_SHIFT_AVAILABLE']);
 
   function interpret(component, name, addr, payload) {
@@ -235,9 +261,32 @@
       const v = decodeField1Varint(raw);
       return { display: v === null ? `hex: ${hex}` : `${(v / 10).toFixed(1)} W`, value: v === null ? null : v / 10, hex };
     }
-    if (key === 'DriveUnit.BIKE_LIGHT_CONFIGURATION' || key === 'DriveUnit.BIKE_LIGHT_CONFIGURATION_OEM') {
+    if (key === 'DriveUnit.BIKE_LIGHT_CONFIGURATION') {
       const v = decodeField1Varint(raw);
       return { display: v === null ? `hex: ${hex}` : String(v), value: v, hex };
+    }
+    if (key === 'DriveUnit.BIKE_LIGHT_CONFIGURATION_OEM') {
+      const v1 = decodeField1Varint(raw);
+      if (v1 !== null) return { display: String(v1), value: v1, hex };
+      // The OEM variant carries its mode in protobuf field 3 (tag 0x18).
+      if (raw.length > 0 && raw[0] === 0x18) {
+        const r = readVarint(raw, 1);
+        return { display: `OEM mode ${r.value}`, value: r.value, hex };
+      }
+      return { display: `hex: ${hex}`, value: null, hex };
+    }
+    if (key === 'DriveUnit.WALK_ASSIST_CONFIGURATION') {
+      // Field 1 = enabled bool, field 2 = speed in 0.01 km/h (400 = 4.0 km/h).
+      const fields = decodeSimpleVarintFields(raw);
+      const hasFields = fields[1] !== undefined || fields[2] !== undefined;
+      if (hasFields || raw.length === 0) {
+        const enabled = !!fields[1];
+        const speedKmh = fields[2] !== undefined ? Number((fields[2] / 100).toFixed(1)) : null;
+        const display = enabled
+          ? (speedKmh !== null ? `Enabled (${speedKmh.toFixed(1)} km/h)` : 'Enabled')
+          : 'Disabled';
+        return { display, value: { enabled, speedKmh }, hex };
+      }
     }
     if (key === 'RemoteControl.BIKE_ID' || key === 'DriveUnit.BIKE_ID') {
       const u = decodeUuidBytes(raw);
@@ -1210,6 +1259,23 @@
       const payload = on ? [0x08, 0x01] : [0x08, 0x00];
       return writeVerified('DriveUnit', 'BIKE_LIGHT', payload, (v) => v === on,
         on ? 'Switch bike light on' : 'Switch bike light off', owner);
+    },
+    portActive(portName, on, owner) {
+      // Dedicated boolean writer for the two accessory ports. The bike may
+      // answer an explicit 08 00 with an empty proto3 payload; judging the
+      // fresh read-back as a decoded boolean keeps that verified as applied
+      // instead of failing a raw-hex equality check.
+      if (portName !== 'LOW_POWER_PORT_ACTIVE' && portName !== 'HIGH_POWER_PORT_ACTIVE') {
+        const e = new Error('portActive only supports LOW_POWER_PORT_ACTIVE or HIGH_POWER_PORT_ACTIVE');
+        e.code = 'WRITE_BLOCKED'; throw e;
+      }
+      if (typeof on !== 'boolean') {
+        const e = new Error('Port state must be a boolean');
+        e.code = 'WRITE_BLOCKED'; throw e;
+      }
+      const payload = on ? [0x08, 0x01] : [0x08, 0x00];
+      return writeVerified('DriveUnit', portName, payload, (v) => v === on,
+        on ? 'Activate ' + portName : 'Deactivate ' + portName, owner);
     },
     serviceDue({ timestamp, odometer }, owner) {
       const payload = encodeServiceDue({ timestamp, odometer });

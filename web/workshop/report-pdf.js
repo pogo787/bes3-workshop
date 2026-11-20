@@ -600,11 +600,21 @@
         font(doc, 8.3, 'bold', C.ink); doc.text(k, xx, yy0);
         font(doc, 8.3, 'normal', C.ink2); doc.text(doc.splitTextToSize(String(v || 'Not available'), (cw - 20) / 2 - 1).slice(0, 2), xx, yy0 + 4);
       };
-      const r1y = comps.length > 4 ? yy + 29 : yy + 31;
-      const r2y = comps.length > 4 ? yy + 39.5 : yy + 44;
+      // A 26-character Bosch serial does not fit a half-width column. Give it
+      // the full card width and a slightly smaller value font so it stays on
+      // one clean line instead of breaking mid-segment.
+      const kvFull = (k, v, yy0) => {
+        font(doc, 8.3, 'bold', C.ink); doc.text(k, c1, yy0);
+        font(doc, 7.6, 'normal', C.ink2); doc.text(String(v || 'Not available'), c1 + 24, yy0);
+      };
+      const r1y = comps.length > 4 ? yy + 28 : yy + 31;
+      const r2y = comps.length > 4 ? yy + 35 : yy + 39;
+      const r3y = comps.length > 4 ? yy + 41 : yy + 47;
       if (c.note) { font(doc, 8.3, 'normal', C.ink2); doc.text(doc.splitTextToSize(c.note, cw - 20).slice(0, 3), c1, r1y); return; }
-      kv('Serial number', A(c.serial), c1, r1y); kv('Software version', c.sw, c2, r1y);
-      kv('Product code', c.code, c1, r2y); kv('Part number', fmtPart(c.part), c2, r2y);
+      kvFull('Serial number', A(c.serial), r1y);
+      kv('Software version', c.sw, c2, r2y);
+      kv('Product code', c.code, c1, r2y);
+      kvFull('Part number', fmtPart(c.part), r3y);
     });
     y += Math.ceil(comps.length / 2) * (ch + GAP) + 1;
     {

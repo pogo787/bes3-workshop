@@ -5,3 +5,8 @@ web/parts/
 web/workshop/part-images-pdf.js
 web/data/part-images.json
 tools/export-for-review.mjs
+# Private developer workbench — not for public distribution
+dev.html
+web/dev/
+docs/dev/
+tools/github-release.sh
